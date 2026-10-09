@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 日志
+debug.log
+*.log
+
+# PyInstaller 构建产物
+build/
+dist/*.exe
+*.spec.bak
+
+# 本地环境配置（含密钥/密码，切勿提交）
+.cURL/

@@ -10,7 +10,10 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
-from .config import load_env_configs, save_env_configs, save_ssh_config
+from .config import (
+    load_env_configs, save_env_configs, save_ssh_config,
+    load_ssh_targets, normalize_ssh_config,
+)
 from .theme import solid_button_qss, ghost_button_qss
 from .widgets import StyledDropdown, KeyValueEditor
 from .ssh_executor import SSHRemoteExecutor
@@ -27,7 +30,7 @@ class EnvManageDialog(QDialog):
         self.configs = load_env_configs()
         self._editing_index = -1  # -1 = 新增模式, >=0 = 编辑模式
         self.setWindowTitle("环境配置管理")
-        self.setFixedSize(560, 600)
+        self.setFixedSize(560, 680)
         self.init_ui()
         self.apply_theme(theme)
 
@@ -41,8 +44,8 @@ class EnvManageDialog(QDialog):
         layout.addWidget(title)
 
         # 列表
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["别名", "签名", "算法", "参数名"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["别名", "签名", "算法", "参数名", "SSH", "目标机"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -107,6 +110,22 @@ class EnvManageDialog(QDialog):
         self.custom_params_editor = KeyValueEditor("参数名", "参数值")
         edit_layout.addWidget(self.custom_params_editor)
 
+        # SSH 远程执行绑定
+        self.use_ssh_check = QCheckBox("启用 SSH 远程执行（执行时经跳板机连接所选目标机）")
+        self.use_ssh_check.stateChanged.connect(self._on_ssh_toggle)
+        edit_layout.addWidget(self.use_ssh_check)
+
+        ssh_row = QHBoxLayout()
+        ssh_row.addWidget(QLabel("目标机:"))
+        self.ssh_target_dropdown = StyledDropdown([])
+        self.ssh_target_dropdown.setFixedWidth(220)
+        ssh_row.addWidget(self.ssh_target_dropdown)
+        self.ssh_target_hint = QLabel("（在「设置 → SSH 配置」中添加目标机）")
+        self.ssh_target_hint.setFont(QFont("Segoe UI", 9))
+        ssh_row.addWidget(self.ssh_target_hint)
+        ssh_row.addStretch()
+        edit_layout.addLayout(ssh_row)
+
         layout.addWidget(self.edit_group)
 
         # 按钮行
@@ -147,6 +166,20 @@ class EnvManageDialog(QDialog):
         self.algo_input.setEnabled(enabled)
         self.param_name_input.setEnabled(enabled)
 
+    def _on_ssh_toggle(self, state):
+        self.ssh_target_dropdown.setEnabled(state == Qt.Checked)
+
+    def _refresh_ssh_targets(self):
+        """刷新目标机下拉选项（来自 SSH 配置）"""
+        labels = [t["label"] for t in load_ssh_targets()]
+        cur = self.ssh_target_dropdown.currentText()
+        self.ssh_target_dropdown.set_items(labels)
+        if cur in labels:
+            self.ssh_target_dropdown.setCurrentText(cur)
+        elif labels:
+            self.ssh_target_dropdown.setCurrentText(labels[0])
+        self.ssh_target_hint.setVisible(not labels)
+
     def _refresh_table(self):
         self.table.setRowCount(0)
         for cfg in self.configs:
@@ -156,6 +189,9 @@ class EnvManageDialog(QDialog):
             self.table.setItem(row, 1, QTableWidgetItem("✓" if cfg.get("enable_sign", True) else "✗"))
             self.table.setItem(row, 2, QTableWidgetItem(cfg.get("algo", "MD5")))
             self.table.setItem(row, 3, QTableWidgetItem(cfg.get("param_name", "sign")))
+            self.table.setItem(row, 4, QTableWidgetItem("✓" if cfg.get("use_ssh") else "✗"))
+            self.table.setItem(row, 5, QTableWidgetItem(cfg.get("ssh_target", "") or "—"))
+        self._refresh_ssh_targets()
 
     def _on_row_double_clicked(self, row, col):
         """双击表格行 → 加载到编辑区"""
@@ -170,6 +206,11 @@ class EnvManageDialog(QDialog):
         self.param_name_input.setText(cfg.get("param_name", "sign"))
         custom_params = cfg.get("custom_params", [])
         self.custom_params_editor.set_pairs([(k, v) for k, v in custom_params])
+        self.use_ssh_check.setChecked(bool(cfg.get("use_ssh")))
+        target = cfg.get("ssh_target", "")
+        if target:
+            self.ssh_target_dropdown.setCurrentText(target)
+        self._on_ssh_toggle(Qt.Checked if cfg.get("use_ssh") else Qt.Unchecked)
         self._set_edit_mode(True)
 
     def _set_edit_mode(self, editing):
@@ -190,6 +231,8 @@ class EnvManageDialog(QDialog):
             self.algo_input.setCurrentText("MD5")
             self.param_name_input.setText("sign")
             self.custom_params_editor.clear_all()
+            self.use_ssh_check.setChecked(False)
+            self.ssh_target_dropdown.setEnabled(False)
             self.edit_group.setTitle("编辑环境配置")
             # 恢复签名字段启用状态
             self.key_input.setEnabled(True)
@@ -213,6 +256,9 @@ class EnvManageDialog(QDialog):
         if enable_sign and not key:
             QMessageBox.warning(self, "提示", "启用签名时请输入签名密钥")
             return
+        if self.use_ssh_check.isChecked() and not self.ssh_target_dropdown.currentText():
+            QMessageBox.warning(self, "提示", "启用 SSH 执行时请选择目标机（先在「设置 → SSH 配置」中添加）")
+            return
 
         env_data = {
             "alias": alias,
@@ -221,6 +267,8 @@ class EnvManageDialog(QDialog):
             "algo": algo,
             "param_name": param_name,
             "custom_params": custom_params,
+            "use_ssh": self.use_ssh_check.isChecked(),
+            "ssh_target": self.ssh_target_dropdown.currentText() if self.use_ssh_check.isChecked() else "",
         }
 
         if self._editing_index >= 0:
@@ -340,7 +388,7 @@ class SSHConfigDialog(QDialog):
         self.ssh_data = ssh_data  # reference to parent's dict
         self._hosts = []
         self.setWindowTitle("SSH 配置")
-        self.setFixedSize(460, 580)
+        self.setFixedSize(520, 660)
         self.init_ui()
         self._load_data()
         self.apply_theme(theme)
@@ -384,43 +432,49 @@ class SSHConfigDialog(QDialog):
         row2.addWidget(self.jump_pass, 1)
         layout.addLayout(row2)
 
-        # 目标机
-        target_label = QLabel("目标机 (Target Host)")
+        # 目标机（多个，独立标签）
+        target_label = QLabel("目标机 (可添加多个，环境配置中按标签选用)")
         target_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
         target_label.setStyleSheet("margin-top: 8px;")
         layout.addWidget(target_label)
 
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel("主机:"))
-        self.target_host = QLineEdit()
-        self.target_host.setPlaceholderText("IP / 域名")
-        row3.addWidget(self.target_host, 2)
-        row3.addWidget(QLabel("端口:"))
-        self.target_port = QLineEdit("22")
-        self.target_port.setFixedWidth(60)
-        row3.addWidget(self.target_port)
-        layout.addLayout(row3)
+        self.targets_table = QTableWidget(0, 4)
+        self.targets_table.setHorizontalHeaderLabels(["标签", "主机", "端口", "用户"])
+        self.targets_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.targets_table.verticalHeader().setVisible(False)
+        self.targets_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.targets_table.setEditTriggers(
+            QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed | QAbstractItemView.AnyKeyPressed
+        )
+        layout.addWidget(self.targets_table, 1)
 
-        row4 = QHBoxLayout()
-        row4.addWidget(QLabel("用户:"))
-        self.target_user = QLineEdit()
-        self.target_user.setPlaceholderText("登录用户名（由堡垒机授权决定，可留空）")
-        row4.addWidget(self.target_user, 1)
+        tbtn_row = QHBoxLayout()
+        self.add_target_btn = QPushButton("+ 添加目标机")
+        self.add_target_btn.setFixedHeight(30)
+        self.add_target_btn.setCursor(Qt.PointingHandCursor)
+        self.add_target_btn.clicked.connect(self._add_target_row)
+        tbtn_row.addWidget(self.add_target_btn)
+
+        self.del_target_btn = QPushButton("- 删除选中")
+        self.del_target_btn.setFixedHeight(30)
+        self.del_target_btn.setCursor(Qt.PointingHandCursor)
+        self.del_target_btn.clicked.connect(self._del_target_row)
+        tbtn_row.addWidget(self.del_target_btn)
+        layout.addLayout(tbtn_row)
+
+        # 授权机器下拉：选中后回填到当前行（无选中行则追加新行）
+        row5 = QHBoxLayout()
+        row5.addWidget(QLabel("授权列表:"))
+        self.host_combo = QComboBox()
+        self.host_combo.setToolTip("选择后自动回填到当前选中的目标机行")
+        self.host_combo.activated.connect(self._on_host_picked)
+        row5.addWidget(self.host_combo, 1)
         self.load_hosts_btn = QPushButton("加载授权机器")
         self.load_hosts_btn.setFixedSize(112, 30)
         self.load_hosts_btn.setCursor(Qt.PointingHandCursor)
         self.load_hosts_btn.setToolTip("连接堡垒机，读取当前账号被授权的机器列表")
         self.load_hosts_btn.clicked.connect(self._start_load_hosts)
-        row4.addWidget(self.load_hosts_btn)
-        layout.addLayout(row4)
-
-        # 授权机器下拉：堡垒机（GateShell）唯一入口就是它的菜单
-        row5 = QHBoxLayout()
-        row5.addWidget(QLabel("授权列表:"))
-        self.host_combo = QComboBox()
-        self.host_combo.setToolTip("选择后自动回填上方主机/端口/用户")
-        self.host_combo.activated.connect(self._on_host_picked)
-        row5.addWidget(self.host_combo, 1)
+        row5.addWidget(self.load_hosts_btn)
         layout.addLayout(row5)
 
         # 连接测试
@@ -466,20 +520,52 @@ class SSHConfigDialog(QDialog):
         self.jump_port.setText(self.ssh_data.get("jump_port", "22"))
         self.jump_user.setText(self.ssh_data.get("jump_user", ""))
         self.jump_pass.setText(self.ssh_data.get("jump_pass", ""))
-        self.target_host.setText(self.ssh_data.get("target_host", ""))
-        self.target_port.setText(self.ssh_data.get("target_port", "22"))
-        self.target_user.setText(self.ssh_data.get("target_user", ""))
+        self.targets_table.setRowCount(0)
+        for t in normalize_ssh_config(self.ssh_data)["targets"]:
+            self._add_target_row(t)
+
+    def _add_target_row(self, t=None):
+        """添加/回填一行目标机；t=None 时添加空行"""
+        t = t or {}
+        row = self.targets_table.rowCount()
+        self.targets_table.insertRow(row)
+        self.targets_table.setItem(row, 0, QTableWidgetItem(t.get("label", "")))
+        self.targets_table.setItem(row, 1, QTableWidgetItem(t.get("host", "")))
+        self.targets_table.setItem(row, 2, QTableWidgetItem(str(t.get("port", "22"))))
+        self.targets_table.setItem(row, 3, QTableWidgetItem(t.get("user", "")))
+        self.targets_table.setCurrentCell(row, 0)
+
+    def _del_target_row(self):
+        row = self.targets_table.currentRow()
+        if row >= 0:
+            self.targets_table.removeRow(row)
+
+    def _collect_targets(self):
+        """读取目标机表格 → [{label, host, port, user}]"""
+        targets = []
+        for r in range(self.targets_table.rowCount()):
+            def cell(c):
+                it = self.targets_table.item(r, c)
+                return it.text().strip() if it else ""
+            host = cell(1)
+            if host:
+                targets.append({
+                    "label": cell(0) or host,
+                    "host": host,
+                    "port": cell(2) or "22",
+                    "user": cell(3),
+                })
+        return targets
 
     def _save(self):
         self.ssh_data["jump_host"] = self.jump_host.text().strip()
         self.ssh_data["jump_port"] = self.jump_port.text().strip()
         self.ssh_data["jump_user"] = self.jump_user.text().strip()
         self.ssh_data["jump_pass"] = self.jump_pass.text().strip()
-        self.ssh_data["target_host"] = self.target_host.text().strip()
-        self.ssh_data["target_port"] = self.target_port.text().strip()
-        self.ssh_data["target_user"] = self.target_user.text().strip()
-        # 目标机密码已废弃：GateShell 菜单进入目标机由堡垒机代管认证
-        self.ssh_data.pop("target_pass", None)
+        self.ssh_data["targets"] = self._collect_targets()
+        # 清理旧版单目标机字段（已迁移到 targets）
+        for k in ("target_host", "target_port", "target_user", "target_pass", "target_label"):
+            self.ssh_data.pop(k, None)
         save_ssh_config(self.ssh_data)
         self.accept()
 
@@ -514,13 +600,15 @@ class SSHConfigDialog(QDialog):
             logger.info("加载授权机器列表失败: %s", result)
             return
         self._hosts = result
-        current = self.target_host.text().strip()
-        cur_port = self.target_port.text().strip() or "22"
+        self.host_combo.clear()
         for h in result:
             self.host_combo.addItem(f"{h['index']}  {h['name']}  ({h['ip']}:{h['port']})", h)
-        # 已有配置若在授权列表内，默认选中它
+        # 已有目标机若在授权列表内，默认选中它
+        targets = self._collect_targets()
+        cur_row = self.targets_table.currentRow()
+        current = targets[cur_row]["host"] if 0 <= cur_row < len(targets) else ""
         for i, h in enumerate(result):
-            if h["ip"] == current and str(h["port"]) == cur_port:
+            if h["ip"] == current:
                 self.host_combo.setCurrentIndex(i)
                 break
         msg = f"已加载 {len(result)} 台授权机器"
@@ -532,23 +620,33 @@ class SSHConfigDialog(QDialog):
         h = self.host_combo.itemData(index)
         if not h:
             return
-        self.target_host.setText(h["ip"])
-        self.target_port.setText(str(h["port"]))
+        # 回填到当前选中行；无选中行则追加新行
+        row = self.targets_table.currentRow()
+        if row < 0:
+            self._add_target_row()
+            row = self.targets_table.rowCount() - 1
+        self.targets_table.setItem(row, 1, QTableWidgetItem(h["ip"]))
+        self.targets_table.setItem(row, 2, QTableWidgetItem(str(h["port"])))
         if h.get("user"):
-            self.target_user.setText(h["user"])
-        logger.info("已选择授权机器: %s (%s)", h["name"], h["ip"])
+            self.targets_table.setItem(row, 3, QTableWidgetItem(h["user"]))
+        if not (self.targets_table.item(row, 0).text().strip() if self.targets_table.item(row, 0) else ""):
+            self.targets_table.setItem(row, 0, QTableWidgetItem(h.get("name") or h["ip"]))
+        logger.info("已选择授权机器 → 目标机行 %d: %s (%s)", row, h["name"], h["ip"])
 
     # ──────────────────── 连接测试 ────────────────────
     def _collect_fields(self):
-        """读取对话框当前输入（未保存也生效）"""
+        """读取对话框当前输入（未保存也生效）。目标机取表格当前行（默认第一行）。"""
+        targets = self._collect_targets()
+        row = self.targets_table.currentRow()
+        t = targets[row] if 0 <= row < len(targets) else (targets[0] if targets else {})
         return {
             "jump_host": self.jump_host.text().strip(),
             "jump_port": self.jump_port.text().strip(),
             "jump_user": self.jump_user.text().strip(),
             "jump_pass": self.jump_pass.text().strip(),
-            "target_host": self.target_host.text().strip(),
-            "target_port": self.target_port.text().strip(),
-            "target_user": self.target_user.text().strip(),
+            "target_host": t.get("host", ""),
+            "target_port": t.get("port", "22"),
+            "target_user": t.get("user", ""),
         }
 
     def _start_test(self, is_target):

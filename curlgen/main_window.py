@@ -18,7 +18,10 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QFont, QColor, QPalette, QPixmap, QKeySequence
 
-from .config import SCRIPT_DIR, LOG_DIR, load_env_configs, load_ssh_config
+from .config import (
+    SCRIPT_DIR, LOG_DIR, load_env_configs, load_ssh_config,
+    resolve_ssh_cfg, env_ssh_target_alias,
+)
 from .theme import (
     DarkTheme, LightTheme, build_app_stylesheet,
     primary_button_qss, outline_button_qss, solid_button_qss, ghost_button_qss,
@@ -1151,7 +1154,13 @@ class CurlGenerator(QMainWindow):
 
         radio_local = QRadioButton("  本地执行")
         radio_ssh = QRadioButton("  SSH 远程执行（跳板机 → 目标机）")
-        radio_local.setChecked(True)
+        # 当前环境启用 SSH 时默认选中远程执行
+        env_alias = self.env_dropdown.currentText()
+        env_target = env_ssh_target_alias(env_alias)
+        if env_target is not None:
+            radio_ssh.setChecked(True)
+        else:
+            radio_local.setChecked(True)
         layout.addWidget(radio_local)
         layout.addWidget(radio_ssh)
         layout.addStretch()
@@ -1218,18 +1227,23 @@ class CurlGenerator(QMainWindow):
         if mode == "local":
             threading.Thread(target=self._run_local, args=(curl_cmd,), daemon=True).start()
         else:
+            # 按当前环境解析 SSH 目标机（环境启用 SSH 时用其绑定标签，否则用第一个目标机）
+            env_alias = self.env_dropdown.currentText()
+            target_label = env_ssh_target_alias(env_alias)
+            ssh_cfg = resolve_ssh_cfg(self.ssh_data, target_label)
             # 校验 SSH 配置：堡垒机 + 目标机地址即可
             #（目标机认证由堡垒机菜单代管，无需目标机密码）
-            jump_h = self.ssh_data.get("jump_host", "").strip()
-            jump_u = self.ssh_data.get("jump_user", "").strip()
-            jump_p = self.ssh_data.get("jump_pass", "").strip()
-            target_h = self.ssh_data.get("target_host", "").strip()
-            target_u = self.ssh_data.get("target_user", "").strip()
-            config_ok = all([jump_h, jump_u, jump_p, target_h])
+            config_ok = all([
+                (ssh_cfg.get("jump_host") or "").strip(),
+                (ssh_cfg.get("jump_user") or "").strip(),
+                (ssh_cfg.get("jump_pass") or "").strip(),
+                (ssh_cfg.get("target_host") or "").strip(),
+            ])
             if not config_ok:
-                logger.warning("SSH 配置不完整: jump_host=%s jump_user=%s target_host=%s target_user=%s",
-                               jump_h or "(空)", jump_u or "(空)", target_h or "(空)", target_u or "(空)")
-                msg = "SSH 配置不完整，请在菜单「设置 → SSH 配置」中设置"
+                logger.warning("SSH 配置不完整: jump_host=%s target=%s(%s)",
+                               ssh_cfg.get("jump_host") or "(空)",
+                               ssh_cfg.get("target_label") or "(空)", ssh_cfg.get("target_host") or "(空)")
+                msg = "SSH 配置不完整，请在菜单「设置 → SSH 配置」中设置跳板机与目标机"
                 self._show_status(msg, self.theme.RED)
                 self.response_info.setText("状态: 配置不完整")
                 self.response_view.append(f"──── 状态: 配置不完整 ────")
@@ -1237,7 +1251,7 @@ class CurlGenerator(QMainWindow):
                 self.exec_btn.setEnabled(True)
                 self.exec_stop_btn.setEnabled(False)
                 return
-            threading.Thread(target=self._run_ssh, args=(curl_cmd,), daemon=True).start()
+            threading.Thread(target=self._run_ssh, args=(curl_cmd, ssh_cfg), daemon=True).start()
 
     def _stop_execution(self):
         proc = self._exec_process
@@ -1272,9 +1286,10 @@ class CurlGenerator(QMainWindow):
             self._exec_process = None
             self._exec_done()
 
-    def _run_ssh(self, curl_cmd):
+    def _run_ssh(self, curl_cmd, ssh_cfg=None):
         timeout = self._get_exec_timeout()
-        executor = SSHRemoteExecutor(self.ssh_data, on_progress=self._on_exec_progress)
+        cfg = ssh_cfg or resolve_ssh_cfg(self.ssh_data)
+        executor = SSHRemoteExecutor(cfg, on_progress=self._on_exec_progress)
         self._exec_process = executor
         try:
             result = executor.run(curl_cmd, timeout=timeout)

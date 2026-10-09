@@ -24,6 +24,7 @@ const state = {
   timeout: "",
   curl: "",
   envs: [],
+  sshTargets: [],
   saved: { groups: [] },
   history: [],
   ssh: {},
@@ -130,6 +131,77 @@ function highlightCurl(cmd) {
   return out;
 }
 
+/* ─────────── 环境变量引用 {{ref}} 高亮 ─────────── */
+function envVarMap() {
+  const map = {};
+  const env = state.envs.find((x) => x.alias === state.env);
+  if (env) (env.custom_params || []).forEach((p) => { if (p[0]) map[p[0]] = p[1]; });
+  return map;
+}
+
+function syncBodyHighlight() {
+  const ta = $("body-input");
+  const hl = $("body-hl");
+  if (!ta || !hl) return;
+  let text = ta.value;
+  if (text.endsWith("\n")) text += " ";
+  hl.innerHTML = escapeHtml(text).replace(/\{\{[^{}]*\}\}/g, (m) => {
+    const key = m.slice(2, -2);
+    return '<span class="env-ref" data-ref="' + escapeHtml(key) + '">' + m + '</span>';
+  });
+  hl.scrollTop = ta.scrollTop;
+  hl.scrollLeft = ta.scrollLeft;
+  hideRefTip();
+}
+
+/* ─────────── 引用悬浮提示：显示解析后的实际值 ─────────── */
+let refTipEl = null;
+function ensureRefTip() {
+  if (!refTipEl) {
+    refTipEl = document.createElement("div");
+    refTipEl.className = "ref-tip";
+    document.body.appendChild(refTipEl);
+  }
+  return refTipEl;
+}
+function hideRefTip() {
+  if (refTipEl) refTipEl.classList.remove("show");
+}
+function showRefTip(key, value, hasVal, x, y) {
+  const tip = ensureRefTip();
+  tip.textContent = hasVal ? key + " = " + value : key + " = （未定义）";
+  tip.classList.toggle("ref-tip-miss", !hasVal);
+  tip.classList.add("show");
+  tip.style.left = "0px";
+  tip.style.top = "0px";
+  const r = tip.getBoundingClientRect();
+  let nx = x + 14;
+  let ny = y + 18;
+  if (nx + r.width > window.innerWidth - 8) nx = Math.max(8, x - r.width - 14);
+  if (ny + r.height > window.innerHeight - 8) ny = Math.max(8, y - r.height - 18);
+  tip.style.left = nx + "px";
+  tip.style.top = ny + "px";
+}
+function handleRefHover(e) {
+  const ta = $("body-input");
+  const wrap = ta && ta.closest(".editor-wrap");
+  if (!wrap) return;
+  const spans = wrap.querySelectorAll(".env-ref");
+  let hit = null;
+  for (let i = 0; i < spans.length; i++) {
+    const r = spans[i].getBoundingClientRect();
+    if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+      hit = spans[i];
+      break;
+    }
+  }
+  if (!hit) { hideRefTip(); return; }
+  const key = hit.getAttribute("data-ref") || "";
+  const map = envVarMap();
+  const hasVal = Object.prototype.hasOwnProperty.call(map, key);
+  showRefTip(key, hasVal ? map[key] : "", hasVal, e.clientX, e.clientY);
+}
+
 /* ─────────── 表单采集 / 回填 ─────────── */
 function collectForm() {
   const clean = (list) => list
@@ -195,6 +267,7 @@ function syncControlsFromState() {
   // Body
   $("body-type").value = state.bodyType;
   $("body-input").value = state.body;
+  syncBodyHighlight();
   // Auth
   $("auth-type").value = state.authType;
   renderAuthFields();
@@ -283,7 +356,28 @@ function renderEnvSelect() {
   sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "(不选择环境)";
   state.env = sel.value;
 }
-$("env-select").addEventListener("change", (e) => { state.env = e.target.value; });
+$("env-select").addEventListener("change", (e) => {
+  state.env = e.target.value;
+  updateConnBadge();
+});
+
+/* 底部连接徽标：显示当前环境的 SSH 绑定 */
+function env_ssh_label() {
+  const env = state.envs.find((x) => x.alias === state.env);
+  return env && env.use_ssh ? (env.ssh_target || "") : "";
+}
+
+function updateConnBadge() {
+  const env = state.envs.find((x) => x.alias === state.env);
+  const badge = $("conn-badge");
+  if (env && env.use_ssh) {
+    badge.textContent = `● ${state.env} → SSH:${env.ssh_target || "未选目标机"}`;
+  } else if (state.ssh_ready) {
+    badge.textContent = "● SSH 已配置";
+  } else {
+    badge.textContent = "● 本地模式";
+  }
+}
 
 /* ─────────── 方法下拉 ─────────── */
 function renderMethodMenu() {
@@ -469,6 +563,11 @@ async function doExec() {
   const data = collectForm();
   if (!data.url) { toast("请先输入 URL", "err"); return; }
   if (!state.curl) await doGenerate();
+  // 当前环境启用 SSH 时默认选中远程执行
+  const env = state.envs.find((x) => x.alias === state.env);
+  const useSsh = !!(env && env.use_ssh);
+  document.querySelector('input[name="execmode"][value="ssh"]').checked = useSsh;
+  document.querySelector('input[name="execmode"][value="local"]').checked = !useSsh;
   openModal("modal-exec");
 }
 
@@ -491,7 +590,7 @@ async function doExecConfirm() {
     respAppend(`[错误] ${j.error}`);
     respSetStatus("配置不完整", "err");
     setStatus("执行失败", "err");
-    $("conn-badge").textContent = "● 本地模式";
+    updateConnBadge();
     toast(j.error, "err");
   }
 }
@@ -522,6 +621,7 @@ function closeModal() {
 /* ─────────── 环境管理 ─────────── */
 async function openEnvModal() {
   state.envs = await apiGet("/api/envs");
+  state.sshTargets = await apiGet("/api/ssh_targets");
   renderEnvTable();
   openModal("modal-env");
 }
@@ -562,6 +662,33 @@ function renderEnvTable() {
     cb.addEventListener("change", () => e.enable_sign = cb.checked);
     signTd.appendChild(cb);
     tr.appendChild(signTd);
+    // SSH 执行开关
+    const sshTd = document.createElement("td");
+    const sshCb = document.createElement("input");
+    sshCb.type = "checkbox";
+    sshCb.checked = !!e.use_ssh;
+    sshCb.addEventListener("change", () => {
+      e.use_ssh = sshCb.checked;
+      targetSel.disabled = !sshCb.checked;
+    });
+    sshTd.appendChild(sshCb);
+    tr.appendChild(sshTd);
+    // 目标机选择
+    const targetTd = document.createElement("td");
+    const targetSel = document.createElement("select");
+    targetSel.disabled = !e.use_ssh;
+    const emptyOpt = document.createElement("option");
+    emptyOpt.value = ""; emptyOpt.textContent = "—";
+    targetSel.appendChild(emptyOpt);
+    state.sshTargets.forEach((t) => {
+      const o = document.createElement("option");
+      o.value = t.label; o.textContent = t.label;
+      targetSel.appendChild(o);
+    });
+    targetSel.value = e.ssh_target || "";
+    targetSel.addEventListener("change", () => e.ssh_target = targetSel.value);
+    targetTd.appendChild(targetSel);
+    tr.appendChild(targetTd);
     const cp = (e.custom_params || []).map(([k, v]) => `${k}=${v}`).join("; ");
     tr.appendChild(cell(cp, "k1=v1; k2=v2", (v) => {
       e.custom_params = v.split(/[;\n]/).map((s) => s.trim()).filter(Boolean)
@@ -577,7 +704,7 @@ function renderEnvTable() {
     tbody.appendChild(tr);
   });
   if (!state.envs.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="kv-empty">暂无环境，点击「+ 添加环境」</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="kv-empty">暂无环境，点击「+ 添加环境」</td></tr>';
   }
 }
 
@@ -589,6 +716,7 @@ async function saveEnvs() {
   for (const e of cleaned) {
     if (seen.has(e.alias)) { toast(`别名重复: ${e.alias}`, "err"); return; }
     seen.add(e.alias);
+    if (e.use_ssh && !e.ssh_target) { toast(`环境 ${e.alias} 启用 SSH 但未选择目标机`, "err"); return; }
   }
   const j = await api("/api/save_envs", cleaned);
   if (!j.ok) { toast("保存失败", "err"); return; }
@@ -605,26 +733,68 @@ async function openSshModal() {
   $("ssh-jp").value = state.ssh.jump_port || "";
   $("ssh-ju").value = state.ssh.jump_user || "";
   $("ssh-jw").value = state.ssh.jump_pass || "";
-  $("ssh-th").value = state.ssh.target_host || "";
-  $("ssh-tp").value = state.ssh.target_port || "";
-  $("ssh-tu").value = state.ssh.target_user || "";
   $("ssh-test-status").textContent = "";
+  renderSshTargets();
   openModal("modal-ssh");
 }
 
+function renderSshTargets() {
+  const tbody = $("ssh-targets-table").querySelector("tbody");
+  tbody.innerHTML = "";
+  const targets = state.ssh.targets || [];
+  targets.forEach((t, i) => {
+    const tr = document.createElement("tr");
+    const cell = (val, ph, onInput) => {
+      const td = document.createElement("td");
+      const inp = document.createElement("input");
+      inp.value = val ?? "";
+      if (ph) inp.placeholder = ph;
+      inp.addEventListener("input", () => onInput(inp.value));
+      td.appendChild(inp);
+      return td;
+    };
+    tr.appendChild(cell(t.label, "如: 生产-244", (v) => t.label = v));
+    tr.appendChild(cell(t.host, "IP / 域名", (v) => t.host = v));
+    tr.appendChild(cell(t.port || "22", "22", (v) => t.port = v));
+    tr.appendChild(cell(t.user, "登录用户", (v) => t.user = v));
+    const delTd = document.createElement("td");
+    const del = document.createElement("button");
+    del.className = "row-del";
+    del.textContent = "×";
+    del.addEventListener("click", () => {
+      state.ssh.targets.splice(i, 1);
+      renderSshTargets();
+    });
+    delTd.appendChild(del);
+    tr.appendChild(delTd);
+    tbody.appendChild(tr);
+  });
+  if (!targets.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="kv-empty">暂无目标机，点击「+ 添加目标机」</td></tr>';
+  }
+}
+
 async function saveSsh() {
+  const targets = (state.ssh.targets || [])
+    .map((t) => ({
+      label: (t.label || "").trim() || (t.host || "").trim(),
+      host: (t.host || "").trim(),
+      port: (t.port || "22").trim() || "22",
+      user: (t.user || "").trim(),
+    }))
+    .filter((t) => t.host);
   const data = {
     jump_host: $("ssh-jh").value.trim(),
     jump_port: $("ssh-jp").value.trim(),
     jump_user: $("ssh-ju").value.trim(),
     jump_pass: $("ssh-jw").value,
-    target_host: $("ssh-th").value.trim(),
-    target_port: $("ssh-tp").value.trim(),
-    target_user: $("ssh-tu").value.trim(),
+    targets,
   };
   const j = await api("/api/save_ssh", data);
   if (j.ok) {
-    state.ssh = data;
+    state.ssh.targets = targets;
+    state.sshTargets = targets;
+    updateConnBadge();
     toast("SSH 配置已保存 ✓", "ok");
     closeModal();
   } else toast("保存失败", "err");
@@ -642,7 +812,7 @@ async function pollEvents() {
       state.executing = false;
       $("btn-exec").disabled = false;
       $("btn-stop").disabled = true;
-      $("conn-badge").textContent = "● 本地模式";
+      updateConnBadge();
       const code = ev.code;
       let txt, kind;
       if (code === 0) { txt = "成功 (exit 0)"; kind = "ok"; }
@@ -697,10 +867,20 @@ function bindEvents() {
 
   // Body
   $("body-type").addEventListener("change", (e) => state.bodyType = e.target.value);
+  $("body-input").addEventListener("input", syncBodyHighlight);
+  $("body-input").addEventListener("scroll", () => {
+    const hl = $("body-hl");
+    hl.scrollTop = $("body-input").scrollTop;
+    hl.scrollLeft = $("body-input").scrollLeft;
+    hideRefTip();
+  });
+  $("body-input").addEventListener("mousemove", handleRefHover);
+  $("body-input").addEventListener("mouseleave", hideRefTip);
   $("btn-pretty").addEventListener("click", () => {
     try {
       const obj = JSON.parse($("body-input").value);
       $("body-input").value = JSON.stringify(obj, null, 2);
+      syncBodyHighlight();
       toast("JSON 已美化 ✓", "ok");
     } catch (e) { toast(`JSON 格式错误: ${e.message}`, "err"); }
   });
@@ -708,6 +888,7 @@ function bindEvents() {
     try {
       const obj = JSON.parse($("body-input").value);
       $("body-input").value = JSON.stringify(obj);
+      syncBodyHighlight();
       toast("JSON 已压缩 ✓", "ok");
     } catch (e) { toast(`JSON 格式错误: ${e.message}`, "err"); }
   });
@@ -737,12 +918,21 @@ function bindEvents() {
     toast("历史已清空", "ok");
   });
   $("env-add").addEventListener("click", () => {
-    state.envs.push({ alias: "", key: "", algo: "MD5", param_name: "sign", enable_sign: true, custom_params: [] });
+    state.envs.push({ alias: "", key: "", algo: "MD5", param_name: "sign", enable_sign: true, custom_params: [], use_ssh: false, ssh_target: "" });
     renderEnvTable();
   });
   $("ssh-save").addEventListener("click", saveSsh);
+  $("ssh-target-add").addEventListener("click", () => {
+    if (!state.ssh.targets) state.ssh.targets = [];
+    state.ssh.targets.push({ label: "", host: "", port: "22", user: "" });
+    renderSshTargets();
+  });
   $("ssh-test-jump").addEventListener("click", async () => { await api("/api/test_ssh", { target: false }); });
-  $("ssh-test-target").addEventListener("click", async () => { await api("/api/test_ssh", { target: true }); });
+  $("ssh-test-target").addEventListener("click", async () => {
+    // 测试目标机：优先用当前环境绑定的标签，否则第一个
+    const label = env_ssh_label() || (state.ssh.targets && state.ssh.targets[0] && state.ssh.targets[0].label) || "";
+    await api("/api/test_ssh", { target: true, label });
+  });
 
   // 保存弹窗分组联动
   $("save-group").addEventListener("change", (e) => {
@@ -786,9 +976,10 @@ async function init() {
     state.envs = j.envs || [];
     state.saved = j.saved || { groups: [] };
     state.ssh = j.ssh || {};
+    state.ssh_ready = !!j.ssh_ready;
     if (j.logo) $("brand-logo").src = j.logo;
-    $("conn-badge").textContent = j.ssh_ready ? "● SSH 已配置" : "● 本地模式";
     renderEnvSelect();
+    updateConnBadge();
     renderSaved();
     refreshHistory();
     toast("星轨控制台已就绪 ⚡", "ok");

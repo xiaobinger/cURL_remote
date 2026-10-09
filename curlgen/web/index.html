@@ -107,7 +107,10 @@
           <button class="btn btn-mini" id="btn-pretty">美化</button>
           <button class="btn btn-mini" id="btn-minify">压缩</button>
         </div>
-        <textarea id="body-input" spellcheck="false" placeholder='{\n  "key": "value"\n}'></textarea>
+        <div class="editor-wrap">
+          <pre id="body-hl" class="hl-layer" aria-hidden="true"></pre>
+          <textarea id="body-input" spellcheck="false" placeholder='{\n  "key": "value"\n}'></textarea>
+        </div>
       </div>
 
       <!-- Auth -->
@@ -185,7 +188,7 @@
     <div class="table-scroll">
       <table class="data-table" id="env-table">
         <thead><tr>
-          <th>别名</th><th>签名密钥</th><th>算法</th><th>参数名</th><th>启用签名</th><th>自定义变量</th><th></th>
+          <th>别名</th><th>签名密钥</th><th>算法</th><th>参数名</th><th>启用签名</th><th>SSH执行</th><th>目标机</th><th>自定义变量</th><th></th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -206,11 +209,14 @@
       <label class="field">端口<input id="ssh-jp" type="text"></label>
       <label class="field">用户<input id="ssh-ju" type="text"></label>
       <label class="field">密码<input id="ssh-jw" type="password"></label>
-      <h4>目标机 Target Host</h4>
-      <label class="field">主机<input id="ssh-th" type="text"></label>
-      <label class="field">端口<input id="ssh-tp" type="text"></label>
-      <label class="field">用户<input id="ssh-tu" type="text"></label>
-      <label class="field">密码<em>由堡垒机菜单代管</em><input id="ssh-tw" type="password" disabled></label>
+      <h4>目标机 Target Host <span class="modal-sub">可添加多个，环境配置中按标签选用</span></h4>
+      <div class="ssh-targets-wrap">
+        <table class="data-table" id="ssh-targets-table">
+          <thead><tr><th>标签</th><th>主机</th><th>端口</th><th>用户</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button class="btn btn-mini" id="ssh-target-add">+ 添加目标机</button>
+      </div>
     </div>
     <div class="modal-btns">
       <button class="btn btn-mini" id="ssh-test-jump">测试跳板机</button>

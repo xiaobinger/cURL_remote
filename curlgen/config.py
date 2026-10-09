@@ -88,3 +88,73 @@ def save_saved_requests(data):
     except Exception as e:
         logger.error("保存快捷请求失败: %s", e)
         raise
+
+
+# ──────────────────────────── SSH 多目标机 ────────────────────────────
+def normalize_ssh_config(data):
+    """兼容旧版单目标机格式：target_host* → targets[{label,host,port,user}]"""
+    if not isinstance(data, dict):
+        data = {}
+    targets = data.get("targets")
+    if not targets:
+        host = (data.get("target_host") or "").strip()
+        targets = []
+        if host:
+            targets.append({
+                "label": data.get("target_label") or "默认目标机",
+                "host": host,
+                "port": data.get("target_port") or "22",
+                "user": data.get("target_user") or "",
+            })
+    clean = []
+    for t in targets:
+        t = t or {}
+        host = (t.get("host") or "").strip()
+        if not host:
+            continue
+        clean.append({
+            "label": (t.get("label") or host).strip() or host,
+            "host": host,
+            "port": str(t.get("port") or "22").strip() or "22",
+            "user": (t.get("user") or "").strip(),
+        })
+    data["targets"] = clean
+    return data
+
+
+def load_ssh_targets():
+    """返回目标机列表 [{label, host, port, user}]"""
+    return normalize_ssh_config(load_ssh_config()).get("targets", [])
+
+
+def resolve_ssh_cfg(ssh_data, label=None):
+    """按目标机标签解析出完整执行配置（jump_* + target_*）。
+    label 为空或找不到时用第一个目标机。"""
+    data = normalize_ssh_config(ssh_data)
+    targets = data.get("targets", [])
+    target = None
+    if label:
+        target = next((t for t in targets if t["label"] == label), None)
+    if target is None and targets:
+        target = targets[0]
+    cfg = {
+        "jump_host": data.get("jump_host", ""),
+        "jump_port": data.get("jump_port", ""),
+        "jump_user": data.get("jump_user", ""),
+        "jump_pass": data.get("jump_pass", ""),
+        "target_host": target["host"] if target else "",
+        "target_port": target["port"] if target else "",
+        "target_user": target["user"] if target else "",
+        "target_label": target["label"] if target else "",
+    }
+    return cfg
+
+
+def env_ssh_target_alias(env_alias):
+    """环境别名 → 其配置的 SSH 目标机标签；未启用 SSH 返回 None"""
+    if not env_alias or env_alias == "(不选择环境)":
+        return None
+    for c in load_env_configs():
+        if c.get("alias") == env_alias and c.get("use_ssh"):
+            return c.get("ssh_target") or ""
+    return None

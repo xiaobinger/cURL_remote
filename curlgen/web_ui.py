@@ -22,6 +22,8 @@ from .config import (
     SCRIPT_DIR, load_env_configs, save_env_configs,
     load_ssh_config, save_ssh_config,
     load_saved_requests, save_saved_requests,
+    normalize_ssh_config, load_ssh_targets,
+    resolve_ssh_cfg, env_ssh_target_alias,
 )
 from .curl_builder import build_curl
 from .ssh_executor import (
@@ -68,13 +70,13 @@ class _ApiHandler(BaseHTTPRequestHandler):
         try:
             path = self.path.split("?")[0]
             if path == "/api/state":
-                ssh = load_ssh_config()
-                ssh_ready = all([
-                    (ssh.get("jump_host") or "").strip(),
-                    (ssh.get("jump_user") or "").strip(),
-                    (ssh.get("jump_pass") or "").strip(),
-                    (ssh.get("target_host") or "").strip(),
-                ])
+                ssh = normalize_ssh_config(load_ssh_config())
+                ssh_ready = bool(
+                    (ssh.get("jump_host") or "").strip()
+                    and (ssh.get("jump_user") or "").strip()
+                    and (ssh.get("jump_pass") or "").strip()
+                    and ssh.get("targets")
+                )
                 self._send_json({
                     "logo": self.app.logo_data_url(),
                     "envs": load_env_configs(),
@@ -85,7 +87,9 @@ class _ApiHandler(BaseHTTPRequestHandler):
             elif path == "/api/envs":
                 self._send_json(load_env_configs())
             elif path == "/api/ssh":
-                self._send_json(load_ssh_config())
+                self._send_json(normalize_ssh_config(load_ssh_config()))
+            elif path == "/api/ssh_targets":
+                self._send_json(load_ssh_targets())
             elif path == "/api/history":
                 self._send_json(self.app.history)
             elif path == "/api/events":
@@ -133,10 +137,10 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 save_env_configs(data if isinstance(data, list) else [])
                 self._send_json({"ok": True})
             elif path == "/api/save_ssh":
-                save_ssh_config(data)
+                save_ssh_config(normalize_ssh_config(data))
                 self._send_json({"ok": True})
             elif path == "/api/test_ssh":
-                self.app.start_ssh_test(bool(data.get("target")))
+                self.app.start_ssh_test(bool(data.get("target")), data.get("label"))
                 self._send_json({"ok": True})
             elif path == "/api/switch_legacy":
                 self.app.sig_switch_legacy.emit()
@@ -315,13 +319,17 @@ class WebCurlGenerator(QMainWindow):
                 return
         logger.info("开始执行请求 (mode=%s)", mode)
 
+        ssh_cfg = None
         if mode == "ssh":
-            ssh = load_ssh_config()
+            # 按当前环境解析 SSH 目标机（环境启用 SSH 时用其绑定标签，否则用第一个目标机）
+            env_alias = data.get("env")
+            label = env_ssh_target_alias(env_alias)
+            ssh_cfg = resolve_ssh_cfg(load_ssh_config(), label)
             ok = all([
-                (ssh.get("jump_host") or "").strip(),
-                (ssh.get("jump_user") or "").strip(),
-                (ssh.get("jump_pass") or "").strip(),
-                (ssh.get("target_host") or "").strip(),
+                (ssh_cfg.get("jump_host") or "").strip(),
+                (ssh_cfg.get("jump_user") or "").strip(),
+                (ssh_cfg.get("jump_pass") or "").strip(),
+                (ssh_cfg.get("target_host") or "").strip(),
             ])
             if not ok:
                 msg = "SSH 配置不完整，请在「SSH 设置」中完善跳板机与目标机信息"
@@ -335,7 +343,7 @@ class WebCurlGenerator(QMainWindow):
             try:
                 timeout = self._parse_timeout(data)
                 if mode == "ssh":
-                    executor = SSHRemoteExecutor(load_ssh_config(), on_progress=self._on_exec_progress)
+                    executor = SSHRemoteExecutor(ssh_cfg, on_progress=self._on_exec_progress)
                 else:
                     executor = LocalExecutor(on_progress=self._on_exec_progress)
                 self._exec_process = executor
@@ -380,9 +388,9 @@ class WebCurlGenerator(QMainWindow):
                 logger.warning("停止执行失败: %s", e)
 
     # ──────────────────── SSH 测试 ────────────────────
-    def start_ssh_test(self, include_target):
+    def start_ssh_test(self, include_target, label=None):
         def worker():
-            cfg = load_ssh_config()
+            cfg = resolve_ssh_cfg(load_ssh_config(), label)
             try:
                 ok, msg = SSHRemoteExecutor.test_connection(cfg, include_target=include_target)
             except Exception as e:
