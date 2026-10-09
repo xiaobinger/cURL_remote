@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cURL Generator · 星轨控制台</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- ═══════════ 侧边栏 ═══════════ -->
+<aside id="sidebar">
+  <div class="brand">
+    <img id="brand-logo" alt="logo" src="">
+    <div class="brand-text">
+      <div class="brand-name">cURL Generator</div>
+      <div class="brand-sub">星轨控制台 · Aurora</div>
+    </div>
+  </div>
+
+  <nav class="nav">
+    <button class="nav-item active" data-view="request"><span class="nav-ico">⚡</span>请求构建</button>
+    <button class="nav-item" id="nav-env"><span class="nav-ico">🌐</span>环境管理</button>
+    <button class="nav-item" id="nav-ssh"><span class="nav-ico">🖧</span>SSH 设置</button>
+    <button class="nav-item" id="nav-theme"><span class="nav-ico">🌓</span>切换主题</button>
+    <button class="nav-item" id="nav-legacy"><span class="nav-ico">↩</span>返回旧版</button>
+  </nav>
+
+  <div class="side-section" id="saved-section">
+    <div class="side-title">
+      <span>快捷请求</span>
+      <button class="side-add" id="saved-collapse-all" title="全部折叠">⇱</button>
+    </div>
+    <div id="saved-list" class="side-list"></div>
+  </div>
+
+  <div class="side-section grow" id="history-section">
+    <div class="side-title">
+      <span>历史记录</span>
+      <button class="side-add" id="history-clear" title="清空历史">🗑</button>
+    </div>
+    <div id="history-list" class="side-list"></div>
+  </div>
+
+  <div class="side-footer" id="conn-badge">● 本地模式</div>
+</aside>
+
+<!-- ═══════════ 主区域 ═══════════ -->
+<main id="main">
+  <!-- 命令栏 -->
+  <header id="command-bar">
+    <div class="cmd-row">
+      <div class="method-dd" id="method-dd">
+        <button id="method-btn" class="method-chip">GET <i>▾</i></button>
+        <div class="method-menu" id="method-menu"></div>
+      </div>
+      <input id="url-input" class="url-input" type="text"
+             placeholder="https://api.example.com/v1/resource" spellcheck="false">
+      <div class="env-wrap">
+        <select id="env-select" class="env-select"></select>
+        <span class="sign-preview" id="sign-preview"></span>
+      </div>
+    </div>
+    <div class="cmd-row actions">
+      <button class="btn btn-primary" id="btn-generate">⚡ 生成 cURL</button>
+      <button class="btn btn-ghost" id="btn-copy">复制</button>
+      <button class="btn btn-ghost" id="btn-save">保存请求</button>
+      <button class="btn btn-exec" id="btn-exec">▶ 执行</button>
+      <button class="btn btn-danger" id="btn-stop" disabled>■ 停止</button>
+      <span class="status-pill" id="status-pill">就绪</span>
+    </div>
+  </header>
+
+  <!-- 编辑区 + 预览区 -->
+  <div id="workspace">
+    <section id="editor-pane">
+      <div class="tabs" id="tabs">
+        <button class="tab active" data-tab="headers">Headers</button>
+        <button class="tab" data-tab="params">Query Params</button>
+        <button class="tab" data-tab="body">Body</button>
+        <button class="tab" data-tab="auth">Auth</button>
+        <button class="tab" data-tab="options">Options</button>
+      </div>
+
+      <!-- Headers / Params -->
+      <div class="tab-page active" data-page="headers">
+        <div class="kv-toolbar">
+          <button class="btn btn-mini" id="headers-add">+ 添加</button>
+          <button class="btn btn-mini danger" id="headers-clear">清空</button>
+        </div>
+        <div class="kv-table" id="headers-table"></div>
+      </div>
+      <div class="tab-page" data-page="params">
+        <div class="kv-toolbar">
+          <button class="btn btn-mini" id="params-add">+ 添加</button>
+          <button class="btn btn-mini danger" id="params-clear">清空</button>
+        </div>
+        <div class="kv-table" id="params-table"></div>
+      </div>
+
+      <!-- Body -->
+      <div class="tab-page" data-page="body">
+        <div class="kv-toolbar">
+          <select id="body-type" class="mini-select">
+            <option>JSON</option><option>Form Data</option><option>Raw Text</option><option>None</option>
+          </select>
+          <button class="btn btn-mini" id="btn-pretty">美化</button>
+          <button class="btn btn-mini" id="btn-minify">压缩</button>
+        </div>
+        <textarea id="body-input" spellcheck="false" placeholder='{\n  "key": "value"\n}'></textarea>
+      </div>
+
+      <!-- Auth -->
+      <div class="tab-page" data-page="auth">
+        <select id="auth-type" class="mini-select wide">
+          <option>None</option><option>Bearer Token</option><option>Basic Auth</option><option>API Key</option>
+        </select>
+        <div id="auth-fields"></div>
+      </div>
+
+      <!-- Options -->
+      <div class="tab-page" data-page="options">
+        <div class="opt-grid">
+          <label class="switch"><input type="checkbox" id="opt-ssl"><span></span>跳过 SSL 验证 (-k)</label>
+          <label class="switch"><input type="checkbox" id="opt-silent"><span></span>静默模式 (-s)</label>
+          <label class="field">代理<input id="opt-proxy" type="text" placeholder="http://proxy:8080"></label>
+          <label class="field">超时(秒)<input id="opt-timeout" type="text" placeholder="30"></label>
+        </div>
+      </div>
+    </section>
+
+    <!-- 预览 / 响应 -->
+    <section id="preview-pane">
+      <div class="pane-head">
+        <span class="pane-title">cURL 预览</span>
+        <span class="pane-actions">
+          <button class="btn btn-mini" id="btn-copy2">复制</button>
+        </span>
+      </div>
+      <pre id="curl-preview" class="code-block"><span class="placeholder">点击「生成 cURL」或按 Ctrl+Enter</span></pre>
+
+      <div class="pane-head">
+        <span class="pane-title">响应结果</span>
+        <span class="resp-status" id="resp-status">未执行</span>
+      </div>
+      <pre id="response-view" class="code-block resp"><span class="placeholder">执行后响应内容将展示在这里...</span></pre>
+    </section>
+  </div>
+</main>
+
+<!-- ═══════════ 模态框 ═══════════ -->
+<div class="modal-mask" id="modal-mask">
+  <!-- 保存请求 -->
+  <div class="modal" id="modal-save">
+    <div class="modal-title">保存快捷请求</div>
+    <label class="field">请求名称
+      <input id="save-name" type="text" placeholder="例如: 查询商户余额">
+    </label>
+    <label class="field">保存到分组
+      <select id="save-group" class="mini-select wide"></select>
+    </label>
+    <input id="save-newgroup" type="text" class="hidden" placeholder="输入新分组名称">
+    <div class="modal-btns">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="save-ok">保存</button>
+    </div>
+  </div>
+
+  <!-- 执行确认 -->
+  <div class="modal" id="modal-exec">
+    <div class="modal-title">选择执行模式</div>
+    <label class="radio-card"><input type="radio" name="execmode" value="local" checked>
+      <span><b>本地执行</b><i>在本机直接运行 curl 命令</i></span></label>
+    <label class="radio-card"><input type="radio" name="execmode" value="ssh">
+      <span><b>SSH 远程执行</b><i>经跳板机 → 目标机执行</i></span></label>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-exec" id="exec-ok">确认执行</button>
+    </div>
+  </div>
+
+  <!-- 环境管理 -->
+  <div class="modal wide" id="modal-env">
+    <div class="modal-title">环境配置管理 <span class="modal-sub">点击单元格直接编辑 · 签名密钥仅存本地 ~/.cURL</span></div>
+    <div class="table-scroll">
+      <table class="data-table" id="env-table">
+        <thead><tr>
+          <th>别名</th><th>签名密钥</th><th>算法</th><th>参数名</th><th>启用签名</th><th>自定义变量</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-mini" id="env-add">+ 添加环境</button>
+      <span class="grow"></span>
+      <button class="btn btn-ghost" data-close>关闭</button>
+    </div>
+  </div>
+
+  <!-- SSH 设置 -->
+  <div class="modal wide" id="modal-ssh">
+    <div class="modal-title">SSH 远程执行配置</div>
+    <div class="ssh-grid">
+      <h4>跳板机 Jump Host</h4>
+      <label class="field">主机<input id="ssh-jh" type="text"></label>
+      <label class="field">端口<input id="ssh-jp" type="text"></label>
+      <label class="field">用户<input id="ssh-ju" type="text"></label>
+      <label class="field">密码<input id="ssh-jw" type="password"></label>
+      <h4>目标机 Target Host</h4>
+      <label class="field">主机<input id="ssh-th" type="text"></label>
+      <label class="field">端口<input id="ssh-tp" type="text"></label>
+      <label class="field">用户<input id="ssh-tu" type="text"></label>
+      <label class="field">密码<em>由堡垒机菜单代管</em><input id="ssh-tw" type="password" disabled></label>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-mini" id="ssh-test-jump">测试跳板机</button>
+      <button class="btn btn-mini" id="ssh-test-target">测试目标机</button>
+      <span class="ssh-test-status" id="ssh-test-status"></span>
+      <span class="grow"></span>
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="ssh-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-root"></div>
+
+<script>window.API_BASE = "http://127.0.0.1:__PORT__";</script>
+<script src="app.js"></script>
+</body>
+</html>
