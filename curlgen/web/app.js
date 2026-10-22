@@ -321,14 +321,32 @@ function activateTab(id) {
   renderSaved();
 }
 
+let closeTabAfterSave = null; // doSaveConfirm 成功后要关闭的标签 id
+
 async function closeTab(id) {
   const idx = state.tabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
   const t = state.tabs[idx];
   if (t.dirty) {
-    const ok = await askConfirm(`「${tabTitle(t)}」有未保存的修改，关闭后将丢失。确定关闭？`);
-    if (!ok) return;
+    const choice = await askCloseSave(tabTitle(t));
+    if (!choice) return; // Esc / 遮罩：取消关闭
+    if (choice === "save") {
+      if (id !== state.activeTab) activateTab(id);
+      if (t.saved) {
+        if (!(await quickSaveActive())) return;
+      } else {
+        closeTabAfterSave = id;
+        doSave(); // 未保存过的标签：先走命名保存，成功后自动关闭
+        return;
+      }
+    }
   }
+  actuallyCloseTab(id);
+}
+
+function actuallyCloseTab(id) {
+  const idx = state.tabs.findIndex((t) => t.id === id);
+  if (idx < 0) return;
   state.tabs.splice(idx, 1);
   if (state.activeTab === id) {
     state.activeTab = null;
@@ -998,9 +1016,16 @@ function askConfirm(text) {
   openModal("modal-confirm");
   return new Promise((res) => { confirmResolve = res; });
 }
+let closeResolve = null;
+function askCloseSave(title) {
+  $("close-text").textContent = `「${title}」有未保存的修改，是否保存？`;
+  openModal("modal-close");
+  return new Promise((res) => { closeResolve = res; });
+}
 function settleModals() {
   if (promptResolve) { promptResolve(null); promptResolve = null; }
   if (confirmResolve) { confirmResolve(false); confirmResolve = null; }
+  if (closeResolve) { closeResolve(null); closeResolve = null; }
 }
 
 /* ─────────── 响应面板 ─────────── */
@@ -1248,6 +1273,23 @@ async function doSave() {
   setTimeout(() => $("save-name").focus(), 50);
 }
 
+async function quickSaveActive() {
+  const t = activeTabRef();
+  if (!t || !t.saved) return false;
+  const data = collectSaveData();
+  if (!data.url) { toast("请先输入 URL", "err"); return false; }
+  const j = await api("/api/save_request", {
+    data, group: t.saved.group, name: t.saved.name, update_old: "",
+  });
+  if (j.error) { toast(j.error, "err"); return false; }
+  state.saved = j.saved;
+  t.dirty = false;
+  renderSaved();
+  renderTabs();
+  toast(`已覆盖保存: ${t.saved.name} ✓`, "ok");
+  return true;
+}
+
 async function doSaveConfirm() {
   const name = $("save-name").value.trim();
   if (!name) { toast("请填写请求名称", "err"); return; }
@@ -1268,6 +1310,11 @@ async function doSaveConfirm() {
   renderTabs();
   closeModal();
   toast(`已保存: ${name}`, "ok");
+  if (closeTabAfterSave != null) {
+    const id = closeTabAfterSave;
+    closeTabAfterSave = null;
+    actuallyCloseTab(id);
+  }
 }
 
 async function doStop() {
@@ -1806,6 +1853,16 @@ function bindEvents() {
     if (confirmResolve) confirmResolve(true);
     confirmResolve = null;
   });
+  $("close-save").addEventListener("click", () => {
+    closeModal();
+    if (closeResolve) closeResolve("save");
+    closeResolve = null;
+  });
+  $("close-discard").addEventListener("click", () => {
+    closeModal();
+    if (closeResolve) closeResolve("close");
+    closeResolve = null;
+  });
 
   // 保存弹窗分组联动
   $("save-group").addEventListener("change", (e) => {
@@ -1830,6 +1887,11 @@ function bindEvents() {
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); refreshPreview(); showPpage("preview"); }
     if (e.ctrlKey && e.shiftKey && e.key === "Enter") { e.preventDefault(); doExec(); }
+    if (e.ctrlKey && (e.key === "s" || e.key === "S")) {
+      e.preventDefault();
+      const t = activeTabRef();
+      if (t && t.saved) quickSaveActive(); else doSave();
+    }
     if (e.ctrlKey && (e.key === "t" || e.key === "T")) { e.preventDefault(); newTab(); }
     if (e.key === "Escape") { settleModals(); closeModal(); }
   });
