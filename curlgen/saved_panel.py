@@ -17,6 +17,7 @@ logger = logging.getLogger("curlgen.saved_panel")
 class SavedRequestsPanel(QWidget):
     """左侧快捷请求面板，分组折叠展示"""
     request_clicked = pyqtSignal(dict)  # 点击请求时发射完整请求数据
+    new_request_requested = pyqtSignal()  # 右键"新建请求"（清空表单，避免覆盖已保存请求）
 
     def __init__(self, theme):
         super().__init__()
@@ -65,6 +66,10 @@ class SavedRequestsPanel(QWidget):
         self.container_layout.setContentsMargins(4, 4, 4, 4)
         self.container_layout.setSpacing(2)
         self.container_layout.addStretch()
+
+        # 空白处右键：新建请求 / 新建分组
+        self.container.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.container.customContextMenuRequested.connect(self._blank_context_menu)
 
         scroll.setWidget(self.container)
         layout.addWidget(scroll, 1)
@@ -159,23 +164,42 @@ class SavedRequestsPanel(QWidget):
 
     def _group_context_menu(self, group_name, pos):
         menu = QMenu(self)
+        new_req_action = menu.addAction("新建请求")
+        menu.addSeparator()
         rename_action = menu.addAction("重命名分组")
         delete_action = menu.addAction("删除分组")
         action = menu.exec_(self._group_widgets[group_name]["header"].mapToGlobal(pos))
-        if action == rename_action:
+        if action == new_req_action:
+            self.new_request_requested.emit()
+        elif action == rename_action:
             self._rename_group(group_name)
         elif action == delete_action:
             self._delete_group(group_name)
 
+    def _blank_context_menu(self, pos):
+        """面板空白处右键菜单"""
+        menu = QMenu(self)
+        new_req_action = menu.addAction("新建请求")
+        new_group_action = menu.addAction("新建分组")
+        action = menu.exec_(self.container.mapToGlobal(pos))
+        if action == new_req_action:
+            self.new_request_requested.emit()
+        elif action == new_group_action:
+            self._add_group()
+
     def _req_context_menu(self, req, group_name, pos):
         menu = QMenu(self)
+        new_req_action = menu.addAction("新建请求")
+        menu.addSeparator()
         delete_action = menu.addAction("删除")
         rename_action = menu.addAction("重命名")
         items = self._group_widgets.get(group_name, {}).get("items", {})
         widget = items.get(req["name"])
         if widget:
             action = menu.exec_(widget.mapToGlobal(QPoint(0, 0)))
-            if action == delete_action:
+            if action == new_req_action:
+                self.new_request_requested.emit()
+            elif action == delete_action:
                 self._delete_request(group_name, req["name"])
             elif action == rename_action:
                 self._rename_request(group_name, req["name"])

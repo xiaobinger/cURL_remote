@@ -29,8 +29,10 @@
   <div class="side-section" id="saved-section">
     <div class="side-title">
       <span>快捷请求</span>
+      <button class="side-add" id="saved-new" title="新建请求">＋</button>
       <button class="side-add" id="saved-collapse-all" title="全部折叠">⇱</button>
     </div>
+    <input id="saved-search" class="saved-search" type="text" placeholder="搜索请求...">
     <div id="saved-list" class="side-list"></div>
   </div>
 
@@ -47,6 +49,9 @@
 
 <!-- ═══════════ 主区域 ═══════════ -->
 <main id="main">
+  <!-- 请求标签栏（Postman 式多标签） -->
+  <div id="req-tabs"></div>
+
   <!-- 命令栏 -->
   <header id="command-bar">
     <div class="cmd-row">
@@ -80,6 +85,7 @@
         <button class="tab" data-tab="body">Body</button>
         <button class="tab" data-tab="auth">Auth</button>
         <button class="tab" data-tab="options">Options</button>
+        <button class="tab" data-tab="scripts">脚本</button>
       </div>
 
       <!-- Headers / Params -->
@@ -130,23 +136,43 @@
           <label class="field">超时(秒)<input id="opt-timeout" type="text" placeholder="30"></label>
         </div>
       </div>
+
+      <!-- 脚本 -->
+      <div class="tab-page" data-page="scripts">
+        <div class="script-block">
+          <div class="script-title">前置脚本<span class="hint">生成 / 执行前运行（JavaScript）</span></div>
+          <textarea id="pre-script" spellcheck="false"
+            placeholder="// 例: pm.request.params.set('timestamp', Date.now())&#10;// pm.request.headers.set('X-Token', pm.variables.get('token'))"></textarea>
+        </div>
+        <div class="script-block">
+          <div class="script-title">后置脚本<span class="hint">响应返回后运行（JavaScript）</span></div>
+          <textarea id="post-script" spellcheck="false"
+            placeholder="// 例: const data = pm.response.json()&#10;// pm.variables.set('token', data.token)&#10;// console.log('耗时', pm.response.time + 'ms')"></textarea>
+        </div>
+      </div>
     </section>
 
-    <!-- 预览 / 响应 -->
-    <section id="preview-pane">
-      <div class="pane-head">
-        <span class="pane-title">cURL 预览</span>
-        <span class="pane-actions">
-          <button class="btn btn-mini" id="btn-copy2">复制</button>
+    <!-- 底部面板：响应 / cURL 预览 -->
+    <section id="bottom-pane">
+      <div class="pane-tabs">
+        <button class="ptab active" data-ptab="response">响应</button>
+        <button class="ptab" data-ptab="preview">cURL 预览</button>
+        <span class="resp-meta" id="resp-meta"></span>
+        <span class="pane-tools">
+          <button class="btn btn-mini" id="btn-resp-pretty" title="JSON 美化 / 原文切换">Pretty</button>
+          <button class="btn btn-mini" id="btn-resp-copy">复制响应</button>
         </span>
-      </div>
-      <pre id="curl-preview" class="code-block"><span class="placeholder">点击「生成 cURL」或按 Ctrl+Enter</span></pre>
-
-      <div class="pane-head">
-        <span class="pane-title">响应结果</span>
         <span class="resp-status" id="resp-status">未执行</span>
       </div>
-      <pre id="response-view" class="code-block resp"><span class="placeholder">执行后响应内容将展示在这里...</span></pre>
+      <div class="ppage active" data-ppage="response">
+        <pre id="response-view" class="code-block resp"><span class="placeholder">执行后响应内容将展示在这里...</span></pre>
+      </div>
+      <div class="ppage" data-ppage="preview">
+        <div class="ppage-tools">
+          <button class="btn btn-mini" id="btn-copy2">复制</button>
+        </div>
+        <pre id="curl-preview" class="code-block"><span class="placeholder">点击「生成 cURL」或按 Ctrl+Enter</span></pre>
+      </div>
     </section>
   </div>
 </main>
@@ -169,9 +195,30 @@
     </div>
   </div>
 
+  <!-- 通用输入弹窗（重命名等） -->
+  <div class="modal" id="modal-prompt">
+    <div class="modal-title" id="prompt-title">重命名</div>
+    <label class="field"><span id="prompt-label">新名称</span>
+      <input id="prompt-input" type="text">
+    </label>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="prompt-ok">确定</button>
+    </div>
+  </div>
+
+  <!-- 通用确认弹窗 -->
+  <div class="modal" id="modal-confirm">
+    <div class="modal-title">确认操作</div>
+    <div class="confirm-text" id="confirm-text"></div>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-danger" id="confirm-ok">确定</button>
+    </div>
+  </div>
+
   <!-- 执行确认 -->
-  <div class="modal" id="modal-exec">
-    <div class="modal-title">选择执行模式</div>
+  <div class="modal" id="modal-exec">    <div class="modal-title">选择执行模式</div>
     <label class="radio-card"><input type="radio" name="execmode" value="local" checked>
       <span><b>本地执行</b><i>在本机直接运行 curl 命令</i></span></label>
     <label class="radio-card"><input type="radio" name="execmode" value="ssh">

@@ -137,6 +137,7 @@ class CurlGenerator(QMainWindow):
         # 左侧快捷请求面板
         self.saved_panel = SavedRequestsPanel(self.theme)
         self.saved_panel.request_clicked.connect(self._load_request)
+        self.saved_panel.new_request_requested.connect(self._new_request)
         splitter.addWidget(self.saved_panel)
 
         input_panel = self._build_input_panel()
@@ -1003,13 +1004,13 @@ class CurlGenerator(QMainWindow):
         env_name = req_data.get("env", "(不选择环境)")
         self.env_dropdown.setCurrentText(env_name)
 
-        # Headers & Params
+        # Headers & Params（Web UI 可能存成 [k, v, enabled] 三元组）
         self.headers_editor.clear_all()
-        for k, v in req_data.get("headers", []):
-            self.headers_editor.add_row(k, v)
+        for row in req_data.get("headers", []):
+            self.headers_editor.add_row(row[0], row[1])
         self.params_editor.clear_all()
-        for k, v in req_data.get("params", []):
-            self.params_editor.add_row(k, v)
+        for row in req_data.get("params", []):
+            self.params_editor.add_row(row[0], row[1])
 
         # Body
         self.body_type.setCurrentText(req_data.get("body_type", "JSON"))
@@ -1084,6 +1085,12 @@ class CurlGenerator(QMainWindow):
             self._current_req_name = dlg.result_name
             self._current_req_group = dlg.result_group
             self._show_status(f"已保存: {dlg.result_name}", self.theme.GREEN)
+
+    def _new_request(self):
+        """新建请求：清空表单并脱离当前加载的快捷请求，保存时存为新请求而不覆盖旧的"""
+        self.reset_all()
+        self._show_status("新建请求（保存时不会覆盖已有请求）", self.theme.TEXT_MUTED)
+        logger.info("右键新建请求，已脱离当前快捷请求")
 
     def reset_all(self):
         self.method_combo._select("GET")
