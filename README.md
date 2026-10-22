@@ -74,7 +74,7 @@
 <td width="50%" valign="top">
 
 ### 🧭 请求工作台
-- 方法选择（GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS）
+- 方法选择（GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS），**方法联动页签**：POST 类自动切 Body、GET 类自动切 Query Params（手动切换、打开快捷请求、切换标签均生效）
 - URL、Query Params、Headers 键值表编辑
 - Body 支持 **JSON / Form Data / Raw Text / None**
 - Body **美化 / 压缩** 一键切换

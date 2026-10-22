@@ -301,6 +301,7 @@ function newTab(snap, saved) {
   state.activeTab = t.id;
   loadSnapshot(t.snap);
   syncControlsFromState();
+  syncEditorTabForMethod();
   renderTabs();
   renderSaved();
   return t;
@@ -313,6 +314,7 @@ function activateTab(id) {
   const t = activeTabRef();
   loadSnapshot(t.snap);
   syncControlsFromState();
+  syncEditorTabForMethod();
   renderTabs();
   renderSaved();
 }
@@ -336,6 +338,7 @@ async function closeTab(id) {
     state.activeTab = next.id;
     loadSnapshot(next.snap);
     syncControlsFromState();
+    syncEditorTabForMethod();
   }
   renderTabs();
   renderSaved();
@@ -586,6 +589,9 @@ function switchEditorTab(name) {
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === name));
   document.querySelectorAll(".tab-page").forEach((x) => x.classList.toggle("active", x.dataset.page === name));
 }
+function syncEditorTabForMethod() {
+  switchEditorTab(["POST", "PUT", "PATCH", "DELETE"].includes(state.method) ? "body" : "params");
+}
 function renderMethodMenu() {
   const menu = $("method-menu");
   menu.innerHTML = "";
@@ -597,7 +603,7 @@ function renderMethodMenu() {
       setMethodChip(m);
       markDirty();
       // 方法联动：带 Body 的方法跳 Body 页，其余跳 Query Params
-      switchEditorTab(["POST", "PUT", "PATCH", "DELETE"].includes(m) ? "body" : "params");
+      syncEditorTabForMethod();
       menu.classList.remove("open");
     });
     menu.appendChild(b);
