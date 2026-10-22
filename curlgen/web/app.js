@@ -581,6 +581,10 @@ function updateConnBadge() {
 }
 
 /* ─────────── 方法下拉 ─────────── */
+function switchEditorTab(name) {
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === name));
+  document.querySelectorAll(".tab-page").forEach((x) => x.classList.toggle("active", x.dataset.page === name));
+}
 function renderMethodMenu() {
   const menu = $("method-menu");
   menu.innerHTML = "";
@@ -591,6 +595,8 @@ function renderMethodMenu() {
       state.method = m;
       setMethodChip(m);
       markDirty();
+      // 方法联动：带 Body 的方法跳 Body 页，其余跳 Query Params
+      switchEditorTab(["POST", "PUT", "PATCH", "DELETE"].includes(m) ? "body" : "params");
       menu.classList.remove("open");
     });
     menu.appendChild(b);
@@ -1405,11 +1411,12 @@ function bindEvents() {
   });
   $("nav-env").addEventListener("click", openEnvModal);
   $("nav-ssh").addEventListener("click", openSshModal);
-  $("nav-theme").addEventListener("click", () => {
-    const cur = document.documentElement.dataset.theme;
-    document.documentElement.dataset.theme = cur === "dark" ? "light" : "dark";
-    toast(cur === "dark" ? "已切换亮色主题" : "已切换暗色主题");
+  $("nav-theme").addEventListener("click", (e) => {
+    e.stopPropagation();
+    $("theme-menu").classList.toggle("open");
   });
+  $("theme-menu").addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", () => $("theme-menu").classList.remove("open"));
   $("nav-legacy").addEventListener("click", async () => {
     await api("/api/switch_legacy");
   });
@@ -1482,9 +1489,46 @@ function bindEvents() {
   setInterval(pollEvents, 300);
 }
 
+/* ─────────── 主题系统 ─────────── */
+const THEMES = [
+  { id: "dark",     name: "深空蓝",   bg: "#070b16", ac: "#5b8cff" },
+  { id: "light",    name: "晨雾白",   bg: "#eef2f9", ac: "#2f6bff" },
+  { id: "obsidian", name: "曜石黑",   bg: "#000000", ac: "#38bdf8" },
+  { id: "violet",   name: "暗夜紫",   bg: "#0e0a1a", ac: "#a78bfa" },
+  { id: "forest",   name: "墨绿森林", bg: "#071310", ac: "#34d399" },
+  { id: "qq",       name: "经典QQ",   bg: "#e8f3fd", ac: "#12b7f5" },
+  { id: "sunset",   name: "阳光橙",   bg: "#fdf3ea", ac: "#f97316" },
+];
+function applyTheme(id, persist = true) {
+  document.documentElement.dataset.theme = id;
+  if (persist) { try { localStorage.setItem("cg-theme", id); } catch (e) { /* 忽略 */ } }
+  document.querySelectorAll("#theme-menu button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.themeId === id));
+}
+function renderThemeMenu() {
+  const menu = $("theme-menu");
+  menu.innerHTML = "";
+  THEMES.forEach((t) => {
+    const b = document.createElement("button");
+    b.dataset.themeId = t.id;
+    b.innerHTML = `<span class="theme-swatch" style="background:linear-gradient(135deg, ${t.bg} 55%, ${t.ac} 55%)"></span>${t.name}`;
+    b.addEventListener("click", () => {
+      applyTheme(t.id);
+      $("theme-menu").classList.remove("open");
+      toast(`主题：${t.name}`);
+    });
+    menu.appendChild(b);
+  });
+}
+
 /* ─────────── 启动 ─────────── */
 async function init() {
     renderMethodMenu();
+    renderThemeMenu();
+    let savedTheme = "dark";
+    try { savedTheme = localStorage.getItem("cg-theme") || "dark"; } catch (e) { /* 忽略 */ }
+    if (!THEMES.some((t) => t.id === savedTheme)) savedTheme = "dark";
+    applyTheme(savedTheme, false);
     bindEvents();
     newTab();
 
