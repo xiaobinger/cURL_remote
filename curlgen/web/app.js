@@ -47,6 +47,9 @@ const state = {
   respElapsed: 0,
   respStartTs: 0,
   respPretty: true,
+  // ── Console（当前执行条目 + 前置脚本结果暂存） ──
+  execEntry: null,
+  preResult: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -296,7 +299,7 @@ function tabTitle(t) {
 
 function newTab(snap, saved) {
   stashActive();
-  const t = { id: ++tabSeq, snap: snap || emptySnapshot(), saved: saved || null, dirty: false };
+  const t = { id: ++tabSeq, snap: snap || emptySnapshot(), saved: saved || null, dirty: false, console: [] };
   state.tabs.push(t);
   state.activeTab = t.id;
   loadSnapshot(t.snap);
@@ -305,6 +308,7 @@ function newTab(snap, saved) {
   livePreview();
   renderTabs();
   renderSaved();
+  renderConsole();
   return t;
 }
 
@@ -319,6 +323,7 @@ function activateTab(id) {
   livePreview();
   renderTabs();
   renderSaved();
+  renderConsole();
 }
 
 let closeTabAfterSave = null; // doSaveConfirm 成功后要关闭的标签 id
@@ -352,7 +357,7 @@ function actuallyCloseTab(id) {
     state.activeTab = null;
     let next = state.tabs[Math.min(idx, state.tabs.length - 1)];
     if (!next) {
-      next = { id: ++tabSeq, snap: emptySnapshot(), saved: null, dirty: false };
+      next = { id: ++tabSeq, snap: emptySnapshot(), saved: null, dirty: false, console: [] };
       state.tabs.push(next);
     }
     state.activeTab = next.id;
@@ -363,6 +368,7 @@ function actuallyCloseTab(id) {
   }
   renderTabs();
   renderSaved();
+  renderConsole();
 }
 
 function markDirty() {
@@ -1090,6 +1096,160 @@ function showPpage(name) {
   document.querySelectorAll(".ppage").forEach((x) => x.classList.toggle("active", x.dataset.ppage === name));
 }
 
+/* ─────────── Console（Postman 风格，每个请求标签独立） ─────────── */
+const CONSOLE_MAX_ENTRIES = 50;   // 每个标签最多保留条数
+const CONSOLE_MAX_OUTPUT = 5000;  // 展开详情里输出最长字符数
+
+function consoleBegin(mode) {
+  const t = activeTabRef();
+  if (!t) return;
+  if (!t.console) t.console = [];
+  const data = collectForm();
+  const pre = state.preResult || { logs: [], ok: true };
+  state.preResult = null;
+  const entry = {
+    id: Date.now() + "_" + Math.floor(Math.random() * 1e6),
+    ts: new Date(),
+    mode,
+    method: data.method,
+    url: data.url,
+    headers: data.headers,
+    params: data.params,
+    bodyType: data.body_type,
+    body: data.body,
+    curl: state.curl || "",
+    preLogs: pre.logs || [],
+    postLogs: [],
+    postError: null,
+    output: "",
+    code: null,
+    statusText: "执行中…",
+    elapsedMs: 0,
+    size: 0,
+    done: false,
+    open: false,
+  };
+  t.console.push(entry);
+  if (t.console.length > CONSOLE_MAX_ENTRIES) t.console.shift();
+  state.execEntry = entry;
+  renderConsole();
+}
+
+function consoleAppend(text) {
+  const e = state.execEntry;
+  if (!e) return;
+  e.output += (e.output && !e.output.endsWith("\n") ? "\n" : "") + text;
+  // 展开状态下实时追加到对应条目
+  if (e.open) {
+    const pre = document.querySelector(`.console-entry[data-eid="${e.id}"] .ce-output`);
+    if (pre) pre.textContent = consoleOutputText(e);
+  }
+}
+
+function consoleFinalize(code, statusText, post) {
+  const e = state.execEntry;
+  if (!e) return;
+  e.done = true;
+  e.code = code;
+  e.statusText = statusText;
+  e.elapsedMs = state.respStartTs ? Date.now() - state.respStartTs : 0;
+  e.size = new Blob([e.output]).size;
+  if (post) {
+    e.postLogs = post.logs || [];
+    e.postError = post.ok ? null : post.error;
+  }
+  state.execEntry = null;
+  renderConsole();
+}
+
+function consoleOutputText(e) {
+  let out = e.output || "";
+  if (out.length > CONSOLE_MAX_OUTPUT) {
+    out = out.slice(0, CONSOLE_MAX_OUTPUT) + "\n…（输出过长已截断，完整内容见「响应」页）";
+  }
+  return out;
+}
+
+function ceSec(title, text, cls) {
+  const d = document.createElement("div");
+  d.className = "ce-sec";
+  const h = document.createElement("div");
+  h.className = "ce-sec-title";
+  h.textContent = title;
+  const pre = document.createElement("pre");
+  if (cls) pre.className = cls;
+  pre.textContent = text;
+  d.appendChild(h);
+  d.appendChild(pre);
+  return d;
+}
+
+function kvText(list) {
+  if (!list || !list.length) return "（无）";
+  return list.map(([k, v]) => `${k}: ${v}`).join("\n");
+}
+
+function consoleEntryEl(e) {
+  const el = document.createElement("div");
+  el.className = "console-entry" + (e.open ? " open" : "");
+  el.dataset.eid = e.id;
+  const mc = METHOD_COLORS[e.method] || "var(--accent)";
+  const badgeCls = !e.done ? "busy" : (e.code === 0 ? "ok" : "err");
+  const meta = e.done
+    ? `${e.statusText} · ${(e.elapsedMs / 1000).toFixed(2)}s · ${fmtSize(e.size)}`
+    : "执行中…";
+  const head = document.createElement("div");
+  head.className = "ce-head";
+  head.innerHTML =
+    '<span class="ce-arrow">▸</span>' +
+    `<span class="ce-time">${e.ts.toLocaleTimeString("zh-CN", { hour12: false })}</span>` +
+    `<span class="ce-method" style="color:${mc}">${escapeHtml(e.method)}</span>` +
+    `<span class="ce-url" title="${escapeHtml(e.url)}">${escapeHtml(e.url)}</span>` +
+    (e.mode === "ssh" ? '<span class="ce-mode">SSH</span>' : "") +
+    `<span class="ce-badge ${badgeCls}">${escapeHtml(meta)}</span>`;
+  head.addEventListener("click", () => {
+    e.open = !e.open;
+    el.classList.toggle("open", e.open);
+  });
+  el.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "ce-body";
+  body.appendChild(ceSec("请求", `${e.method} ${e.url}`));
+  body.appendChild(ceSec("Request Headers", kvText(e.headers)));
+  body.appendChild(ceSec("Query Params", kvText(e.params)));
+  if (e.body && e.body.trim()) {
+    body.appendChild(ceSec(`Request Body (${e.bodyType})`, e.body));
+  }
+  if (e.curl) body.appendChild(ceSec("cURL 命令", e.curl));
+  const scriptLines = [];
+  e.preLogs.forEach((l) => scriptLines.push(`[前置] ${l}`));
+  e.postLogs.forEach((l) => scriptLines.push(`[后置] ${l}`));
+  if (e.postError) scriptLines.push(`[后置脚本错误] ${e.postError}`);
+  if (scriptLines.length) body.appendChild(ceSec("脚本日志", scriptLines.join("\n")));
+  body.appendChild(ceSec(
+    e.done ? `响应（${e.statusText} · ${(e.elapsedMs / 1000).toFixed(2)}s · ${fmtSize(e.size)}）` : "响应（执行中…）",
+    consoleOutputText(e) || "（暂无输出）",
+    "ce-output"
+  ));
+  el.appendChild(body);
+  return el;
+}
+
+function renderConsole() {
+  const list = $("console-list");
+  if (!list) return;
+  const t = activeTabRef();
+  const entries = (t && t.console) || [];
+  list.innerHTML = "";
+  if (!entries.length) {
+    list.innerHTML = '<div class="console-empty">当前请求还没有执行记录<br><span>点击「执行（本地）」或「SSH 请求」后，每次调用会在这里占一条可折叠记录</span></div>';
+    return;
+  }
+  entries.forEach((e) => list.appendChild(consoleEntryEl(e)));
+  list.scrollTop = list.scrollHeight;
+}
+
 /* ─────────── 前后置脚本（Postman 风格 pm API） ─────────── */
 function kvFacade(key) {
   return {
@@ -1180,6 +1340,7 @@ async function prepareExec() {
     setStatus("前置脚本错误", "err");
     return false;
   }
+  state.preResult = pre; // 供 consoleBegin 记录前置脚本日志
   if (pre.ran) {
     syncControlsFromState();
     markDirty();
@@ -1233,6 +1394,7 @@ async function startExec(mode) {
   respSetStatus("执行中...", "busy");
   setStatus("执行中...", "busy");
   $("conn-badge").textContent = `● ${mode === "ssh" ? "SSH 远程" : "本地"}执行中`;
+  consoleBegin(mode);
   const j = await api("/api/execute", { data, mode });
   if (j.error) {
     state.executing = false;
@@ -1240,6 +1402,8 @@ async function startExec(mode) {
     $("btn-ssh-exec").disabled = false;
     $("btn-stop").disabled = true;
     respAppend(`[错误] ${j.error}`);
+    consoleAppend(`[错误] ${j.error}`);
+    consoleFinalize(-1, "失败", null);
     respSetStatus("配置不完整", "err");
     setStatus("执行失败", "err");
     updateConnBadge();
@@ -1641,8 +1805,8 @@ async function pollEvents() {
   if (!j.events) return;
   for (const ev of j.events) {
     if (ev.type === "output") {
-      if (ev.tag === "info") respAppend(`[${ev.text.trim()}]`);
-      else respAppend(ev.text.replace(/\r?\n$/, ""));
+      if (ev.tag === "info") { respAppend(`[${ev.text.trim()}]`); consoleAppend(`[${ev.text.trim()}]`); }
+      else { const s = ev.text.replace(/\r?\n$/, ""); respAppend(s); consoleAppend(s); }
     } else if (ev.type === "finished") {
       state.executing = false;
       $("btn-exec").disabled = false;
@@ -1663,6 +1827,7 @@ async function pollEvents() {
       const post = runScript("post");
       post.logs.forEach((l) => respAppend(`[script] ${l}`, false));
       if (!post.ok) respAppend(`[脚本错误] ${post.error}`, false);
+      consoleFinalize(code, txt, post);
       respSetStatus(txt, kind);
       setStatus(code === 0 ? "执行完成 ✓" : txt, kind);
     } else if (ev.type === "notify") {

@@ -169,6 +169,7 @@
       <div class="pane-tabs">
         <button class="ptab active" data-ptab="response">响应</button>
         <button class="ptab" data-ptab="preview">cURL 预览</button>
+        <button class="ptab" data-ptab="console">Console</button>
         <span class="resp-meta" id="resp-meta"></span>
         <span class="pane-tools">
           <button class="btn btn-mini" id="btn-resp-pretty" title="JSON 美化 / 原文切换">Pretty</button>
@@ -185,6 +186,9 @@
         </div>
         <pre id="curl-preview" class="code-block"><span class="placeholder">输入 URL 后实时生成 cURL</span></pre>
         <button class="ssh-fab" id="btn-ssh-exec" title="通过 SSH 跳板机远程执行（需二次确认）">🖧 SSH 请求</button>
+      </div>
+      <div class="ppage" data-ppage="console">
+        <div id="console-list"></div>
       </div>
     </section>
   </div>
