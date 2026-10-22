@@ -26,9 +26,11 @@
   <div class="side-toolbar">
     <input id="saved-search" class="saved-search" type="text" placeholder="搜索请求...">
     <button class="side-add" id="saved-new" title="新建请求">＋</button>
+    <button class="side-add" id="saved-import" title="从 Postman / Apifox 导入">📥</button>
     <button class="side-add" id="saved-collapse-all" title="全部折叠">⇱</button>
     <button class="side-add hidden" id="history-clear" title="清空历史">🗑</button>
   </div>
+  <input type="file" id="import-file" accept=".json,application/json" class="hidden">
 
   <div class="side-panel" id="panel-saved">
     <div id="saved-list" class="side-list"></div>

@@ -791,6 +791,154 @@ function renderHistory() {
   });
 }
 
+/* ─────────── 导入：Postman Collection v2.1 / OpenAPI 3 ─────────── */
+function pmUrl(u) {
+  if (!u) return "";
+  if (typeof u === "string") return u;
+  const host = (u.host || []).join(".");
+  const path = (u.path || []).join("/");
+  const proto = u.protocol ? u.protocol + "://" : "";
+  return proto + host + (path ? "/" + path : "");
+}
+function pmKV(list) {
+  return (list || []).map((h) => [h.key || "", h.value ?? "", !h.disabled]);
+}
+function pmQuery(u) {
+  if (!u || typeof u === "string" || !u.query) return [];
+  return u.query.map((q) => [q.key || "", q.value ?? "", !q.disabled]);
+}
+function pmBody(b) {
+  if (!b || !b.mode) return { bodyType: "None", body: "" };
+  if (b.mode === "raw") {
+    const lang = b.options && b.options.raw && b.options.raw.language;
+    return { bodyType: lang === "json" ? "JSON" : "Raw Text", body: b.raw || "" };
+  }
+  if (b.mode === "formdata" || b.mode === "urlencoded") {
+    const list = b[b.mode] || [];
+    return { bodyType: "Form Data", body: list.map((x) => `${x.key}=${x.value ?? ""}`).join("\n") };
+  }
+  return { bodyType: "None", body: "" };
+}
+function pmAuth(a) {
+  if (!a || !a.type) return null;
+  const sub = a[a.type];
+  const m = {};
+  if (Array.isArray(sub)) sub.forEach((x) => { m[x.key] = x.value; });
+  else if (sub && typeof sub === "object") Object.assign(m, sub);
+  if (a.type === "bearer") return { auth_type: "Bearer Token", auth_value: m.token || "" };
+  if (a.type === "basic") return { auth_type: "Basic Auth", auth_user: m.username || "", auth_pass: m.password || "" };
+  if (a.type === "apikey") return { auth_type: "API Key", auth_header_name: m.key || "X-API-Key", auth_value: m.value || "" };
+  return null;
+}
+function pmScripts(evts) {
+  let pre = "", post = "";
+  (evts || []).forEach((e) => {
+    const ex = e.script && e.script.exec;
+    const code = ex ? (Array.isArray(ex) ? ex.join("\n") : String(ex)) : "";
+    if (e.listen === "prerequest") pre = code;
+    else if (e.listen === "test") post = code;
+  });
+  return { pre_script: pre, post_script: post };
+}
+function parsePostman(col) {
+  const groups = [];
+  const colAuth = col.auth;
+  const walk = (items, prefix) => {
+    (items || []).forEach((it) => {
+      if (it.item) { walk(it.item, prefix ? prefix + " / " + (it.name || "") : (it.name || "")); return; }
+      if (!it.request) return;
+      const gname = prefix || (col.info && col.info.name) || "导入";
+      let g = groups.find((x) => x.name === gname);
+      if (!g) { g = { name: gname, requests: [] }; groups.push(g); }
+      const req = it.request;
+      const b = pmBody(req.body);
+      const auth = pmAuth(req.auth) || pmAuth(colAuth) || {};
+      const sc = pmScripts(it.event);
+      g.requests.push({
+        name: it.name || (req.method || "GET") + " 请求",
+        method: String(req.method || "GET").toUpperCase(),
+        url: pmUrl(req.url),
+        headers: pmKV(req.header),
+        params: pmQuery(req.url),
+        body_type: b.bodyType,
+        body: b.body,
+        auth_type: auth.auth_type || "None",
+        auth_value: auth.auth_value || "",
+        auth_user: auth.auth_user || "",
+        auth_pass: auth.auth_pass || "",
+        auth_header_name: auth.auth_header_name || "X-API-Key",
+        pre_script: sc.pre_script,
+        post_script: sc.post_script,
+      });
+    });
+  };
+  walk(col.item, "");
+  return groups;
+}
+function parseOpenApi(doc) {
+  const groups = [];
+  const server = (doc.servers && doc.servers[0] && doc.servers[0].url) || "";
+  const HTTP = ["get", "post", "put", "patch", "delete", "head", "options"];
+  Object.keys(doc.paths || {}).forEach((p) => {
+    HTTP.forEach((m) => {
+      const op = doc.paths[p][m];
+      if (!op) return;
+      const gname = (op.tags && op.tags[0]) || "导入";
+      let g = groups.find((x) => x.name === gname);
+      if (!g) { g = { name: gname, requests: [] }; groups.push(g); }
+      const headers = [], params = [];
+      [...(doc.paths[p].parameters || []), ...(op.parameters || [])].forEach((pr) => {
+        if (pr.$ref || !pr.name) return;
+        const val = pr.example != null ? String(pr.example)
+          : (pr.schema && pr.schema.default != null ? String(pr.schema.default) : "");
+        if (pr.in === "query") params.push([pr.name, val, true]);
+        else if (pr.in === "header") headers.push([pr.name, val, true]);
+      });
+      let bodyType = "None", body = "";
+      const content = op.requestBody && op.requestBody.content;
+      if (content) {
+        if (content["application/json"]) {
+          bodyType = "JSON";
+          const c = content["application/json"];
+          const ex = c.example || (c.examples && Object.values(c.examples)[0] && Object.values(c.examples)[0].value);
+          body = ex ? JSON.stringify(ex, null, 2) : "";
+        } else if (content["application/x-www-form-urlencoded"] || content["multipart/form-data"]) {
+          bodyType = "Form Data";
+          const c = content["application/x-www-form-urlencoded"] || content["multipart/form-data"];
+          const props = (c.schema && c.schema.properties) || {};
+          body = Object.keys(props).map((k) => `${k}=${props[k].example ?? props[k].default ?? ""}`).join("\n");
+        }
+      }
+      g.requests.push({
+        name: op.summary || op.operationId || `${m.toUpperCase()} ${p}`,
+        method: m.toUpperCase(),
+        url: server + p,
+        headers, params,
+        body_type: bodyType, body,
+        auth_type: "None", pre_script: "", post_script: "",
+      });
+    });
+  });
+  return groups;
+}
+function parseImportText(text) {
+  let doc;
+  try { doc = JSON.parse(text); } catch (e) { throw new Error("不是有效的 JSON 文件"); }
+  if (doc && doc.info && Array.isArray(doc.item)) return parsePostman(doc);
+  if (doc && (doc.openapi || doc.swagger)) return parseOpenApi(doc);
+  throw new Error("无法识别的格式：支持 Postman Collection v2.1 或 OpenAPI 3 (JSON)");
+}
+async function doImportFile(file) {
+  const text = await file.text();
+  const groups = parseImportText(text);
+  if (!groups.length) { toast("文件里没有可导入的请求", "err"); return; }
+  const j = await api("/api/import_requests", { groups });
+  if (j.error) { toast(j.error, "err"); return; }
+  state.saved = j.saved;
+  renderSaved();
+  toast(`导入完成：${j.requests_added} 个请求 / ${j.groups_added} 个新分组`, "ok");
+}
+
 /* ─────────── 通用弹窗：输入 / 确认 ─────────── */
 let promptResolve = null;
 function askPrompt(title, label, value) {
@@ -1390,6 +1538,13 @@ function bindEvents() {
 
   // 侧边栏
   $("saved-new").addEventListener("click", () => { newTab(); toast("已新建空白请求"); });
+  $("saved-import").addEventListener("click", () => $("import-file").click());
+  $("import-file").addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    doImportFile(f).catch((err) => toast(err.message || "导入失败", "err"));
+  });
   $("saved-search").addEventListener("input", (e) => { state.savedFilter = e.target.value; renderSaved(); renderHistory(); });
   document.querySelectorAll(".side-tab").forEach((b) => {
     b.addEventListener("click", () => {
@@ -1398,6 +1553,7 @@ function bindEvents() {
       $("panel-saved").classList.toggle("hidden", which !== "saved");
       $("panel-history").classList.toggle("hidden", which !== "history");
       $("saved-new").classList.toggle("hidden", which !== "saved");
+      $("saved-import").classList.toggle("hidden", which !== "saved");
       $("saved-collapse-all").classList.toggle("hidden", which !== "saved");
       $("history-clear").classList.toggle("hidden", which !== "history");
       $("saved-search").placeholder = which === "saved" ? "搜索请求..." : "搜索历史...";

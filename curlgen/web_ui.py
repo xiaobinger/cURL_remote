@@ -128,6 +128,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True})
             elif path == "/api/save_request":
                 self._save_request(data)
+            elif path == "/api/import_requests":
+                self._import_requests(data)
             elif path == "/api/delete_request":
                 self._delete_request(data)
             elif path == "/api/clear_history":
@@ -183,6 +185,30 @@ class _ApiHandler(BaseHTTPRequestHandler):
         save_saved_requests(saved)
         logger.info("保存快捷请求: %s/%s", group_name, name)
         self._send_json({"ok": True, "saved": saved})
+
+    def _import_requests(self, payload):
+        """批量导入（Postman / OpenAPI 解析后的结构）：同名片段合并、同名请求覆盖"""
+        saved = load_saved_requests()
+        g_new = 0
+        r_new = 0
+        for g in payload.get("groups") or []:
+            gname = (g.get("name") or "").strip() or "导入"
+            group = next((x for x in saved["groups"] if x["name"] == gname), None)
+            if group is None:
+                group = {"name": gname, "collapsed": False, "requests": []}
+                saved["groups"].append(group)
+                g_new += 1
+            for r in g.get("requests") or []:
+                if not (r.get("name") or "").strip():
+                    continue
+                group["requests"] = [x for x in group["requests"] if x.get("name") != r["name"]]
+                group["requests"].append(r)
+                r_new += 1
+            group["collapsed"] = False
+        save_saved_requests(saved)
+        logger.info("导入请求: +%d 分组 +%d 请求", g_new, r_new)
+        self._send_json({"ok": True, "saved": saved,
+                         "groups_added": g_new, "requests_added": r_new})
 
     def _delete_request(self, payload):
         saved = load_saved_requests()
