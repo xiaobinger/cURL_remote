@@ -27,6 +27,7 @@ const state = {
   preScript: "",
   postScript: "",
   curl: "",
+  codeLang: "curl",   // 代码预览语言（仅 curl 显示 SSH 请求按钮）
   // ── 标签页 ──
   tabs: [],        // [{id, snap, saved:{name,group}|null, dirty}]
   activeTab: null,
@@ -566,7 +567,8 @@ function syncControlsFromState() {
   // cURL 预览
   $("curl-preview").innerHTML = state.curl
     ? highlightCurl(state.curl)
-    : '<span class="placeholder">输入 URL 后实时生成 cURL</span>';
+    : '<span class="placeholder">输入 URL 后实时生成代码</span>';
+  updateConnBadge();
 }
 
 /* ─────────── KV 编辑器（含启用勾选） ─────────── */
@@ -682,9 +684,9 @@ function updateConnBadge() {
   } else {
     badge.textContent = "● 本地模式";
   }
-  // SSH 请求按钮仅在当前环境开启 SSH 时显示
+  // SSH 请求按钮仅在当前环境开启 SSH 且代码预览为 cURL 时显示
   const sshFab = $("btn-ssh-exec");
-  if (sshFab) sshFab.classList.toggle("hidden", !(env && env.use_ssh));
+  if (sshFab) sshFab.classList.toggle("hidden", !(env && env.use_ssh && state.codeLang === "curl"));
 }
 
 /* ─────────── 方法下拉 ─────────── */
@@ -1599,16 +1601,22 @@ async function refreshPreview() {
   const data = collectForm();
   if (!data.url) {
     state.curl = "";
-    $("curl-preview").innerHTML = '<span class="placeholder">输入 URL 后实时生成 cURL</span>';
+    $("curl-preview").innerHTML = '<span class="placeholder">输入 URL 后实时生成代码</span>';
     $("sign-preview").textContent = "";
     return;
   }
   data.preview = true;
+  if (state.codeLang !== "curl") data.lang = state.codeLang;
   const j = await api("/api/generate", data);
   if (j.error) return; // 编辑中静默，不打扰
-  state.curl = j.curl;
-  $("curl-preview").innerHTML = highlightCurl(j.curl);
-  $("sign-preview").textContent = j.sign_preview || "";
+  if (state.codeLang === "curl") {
+    state.curl = j.curl;
+    $("curl-preview").innerHTML = highlightCurl(j.curl);
+    $("sign-preview").textContent = j.sign_preview || "";
+  } else {
+    $("curl-preview").textContent = j.code || "";
+    $("sign-preview").textContent = "";
+  }
 }
 
 /* ─────────── 核心动作 ─────────── */
@@ -2139,7 +2147,20 @@ async function pollEvents() {
 /* ─────────── 事件绑定 ─────────── */
 function bindEvents() {
   $("btn-copy").addEventListener("click", doCopy);
-  $("btn-copy2").addEventListener("click", doCopy);
+  // 预览区「复制」复制当前展示的代码（随语言切换），命令栏「复制」始终复制 cURL
+  $("btn-copy2").addEventListener("click", async () => {
+    const text = $("curl-preview").textContent.trim();
+    if (!text || text.includes("实时生成")) { toast("没有可复制的内容", "err"); return; }
+    await api("/api/copy", { text });
+    toast("已复制到剪贴板 ✓", "ok");
+  });
+
+  // 代码预览语言切换（仅 cURL 显示 SSH 请求按钮）
+  $("code-lang").addEventListener("change", (e) => {
+    state.codeLang = e.target.value;
+    updateConnBadge();
+    refreshPreview();
+  });
   $("btn-save").addEventListener("click", doSave);
   $("btn-exec").addEventListener("click", doExec);
   $("btn-ssh-exec").addEventListener("click", doSshExec);

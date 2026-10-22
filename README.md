@@ -98,7 +98,7 @@
 
 ### 🖧 远程执行
 - **本地直发**：「▶ 执行（本地）」由 Python 直接发起 HTTP 请求（不依赖系统 curl），自动跟随重定向，实时回传响应体，真实状态码 / 响应头 / 耗时尽收
-- **SSH 远程**：cURL 预览框右下角「🖧 SSH 请求」（仅当前环境开启 SSH 时显示），二次确认后经堡垒机执行；远程 curl 自动追加 `-w` 尾注，Console 同样能解析出 HTTP 状态 / 耗时 / 体积
+- **SSH 远程**：代码预览（cURL 语言）右下角「🖧 SSH 请求」（仅当前环境开启 SSH 且预览为 cURL 时显示），二次确认后经堡垒机执行；远程 curl 自动追加 `-w` 尾注，Console 同样能解析出 HTTP 状态 / 耗时 / 体积
 - **GateShell 堡垒机**密码认证菜单接入
 - **多目标机**管理（标签 / 主机 / 端口 / 用户）
 - 命令哨兵包裹，精确捕获退出码
@@ -112,7 +112,7 @@
 - **7 套主题**：深空蓝 / 晨雾白 / 曜石黑 / 暗夜紫 / 墨绿森林 / 经典QQ / 阳光橙，菜单选择并持久记忆
 - 快捷请求分组、历史记录、一键复制
 - **多标签页**（Postman 式）：每个请求一个标签，脏标记 ●，互不惊扰；**Ctrl+S 覆盖保存**；关闭未保存标签时提醒「保存并关闭 / 直接关闭」
-- **cURL 实时预览**：编辑即生成，无需手动点击；历史记录只记真实执行的请求
+- **代码实时预览**：编辑即生成，无需手动点击；「代码预览」页签内可切换 **cURL / Python / JavaScript / TypeScript / Node.js / Java / C# / Go / PHP / Rust** 十种语言（后端基于结构化请求生成，与实际发送一致），预览区「复制」随语言复制当前代码；历史记录只记真实执行的请求
 - **URL 地址栏高亮**：`{{变量}}` 与 query 参数键值染色，悬浮显示解析后的真实取值
 - **Console 面板**（Postman 风格）：底部独立页签，每个请求标签各有一份记录；一次执行一条可折叠条目，展开可见 概览（状态行 / 耗时 / 体积）/ Request Headers·Body（实际发送报文）/ Response Headers·Body / cURL 等效命令 / 脚本日志，状态徽章按 2xx·3xx·4xx/5xx 着色；关闭标签或退出软件即清空
 - 响应区：HTTP 状态行 / 耗时 / 体积元信息，JSON Pretty / Raw 切换，一键复制
@@ -146,7 +146,7 @@
 │ ↩ 返回旧版   │ │ X-Sign     │ {{appKey}}   │ │    -d '{...}'  [🖧SSH请求]│
 │              │ └───────────────────────────┘ │                          │
 │ 快捷请求 ▸    ├───────────────────────────────┴──────────────────────────┤
-│  · 商户余额   │ [响应] [cURL 预览] [Console]              200 OK 0.24s    │
+│  · 商户余额   │ [响应] [代码预览] [Console]              200 OK 0.24s    │
 │  · 下单接口   │  { "code": 0, ... }                                     │
 │ 历史记录 ▸    │  Console：▸16:30 POST /v1/pay  [成功 exit 0·0.24s·64 B] │
 │ ● 本地模式   │    每次执行一条可折叠记录，展开看请求/响应/cURL 详情        │
@@ -264,6 +264,7 @@ buildCurl/
     ├── signing.py             # 🔐 签名入口（MD5 / SHA256）
     ├── sign_utils.py          # 🔐 Java 风格排序 / SHA256 实现
     ├── curl_builder.py        # 🏗 cURL 命令构建（新旧 UI 共用）
+    ├── code_gen.py            # 🧬 多语言代码生成（Python/JS/Java/Go/Rust 等 10 种）
     ├── http_executor.py       # ⚡ 本地直发 HTTP（urllib，自动跟随重定向）
     ├── ssh_executor.py        # 🖧 GateShell 堡垒机远程执行
     ├── widgets.py             # 🧱 通用组件（语法高亮 / 下拉 / 键值编辑器）
@@ -384,7 +385,7 @@ sorted(key1=value1&key2=value2&...) + "key={secret}"
 | `GET` | `/api/history` | 生成历史 |
 | `GET` | `/api/events?since=N` | 事件流增量（执行输出 / 通知 / 测试结果） |
 | `GET` | `/api/onthisday?month=M&day=D` | 历史上的今天（代理中文维基百科，离线返回 error） |
-| `POST` | `/api/generate` | 生成 cURL 命令并返回签名预览 |
+| `POST` | `/api/generate` | 生成 cURL 命令并返回签名预览（`lang=python` 等时返回对应语言代码） |
 | `POST` | `/api/execute` | 执行请求（`mode=local` / `ssh`） |
 | `POST` | `/api/stop` | 停止当前执行 |
 | `POST` | `/api/copy` | 写入系统剪贴板 |

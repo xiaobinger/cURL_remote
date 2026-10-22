@@ -28,6 +28,7 @@ from .config import (
     resolve_ssh_cfg, env_ssh_target_alias,
 )
 from .curl_builder import build_curl, resolve_request, render_curl
+from .code_gen import render_code
 from .ai_client import load_ai_config, save_ai_config, generate_script
 from .http_executor import DirectHttpExecutor
 from .ssh_executor import (
@@ -210,6 +211,17 @@ class _ApiHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)})
 
     def _generate(self, data):
+        lang = (data.pop("lang", "") or "curl").lower()
+        if lang not in ("", "curl"):
+            # 代码预览：按语言生成调用示例（复用 resolve_request，与执行语义一致）
+            try:
+                req = resolve_request(data)
+                code = render_code(req, lang)
+            except ValueError as e:
+                self._send_json({"error": str(e)})
+                return
+            self._send_json({"code": code, "lang": lang})
+            return
         try:
             curl, sign_preview = build_curl(data)
         except ValueError as e:
