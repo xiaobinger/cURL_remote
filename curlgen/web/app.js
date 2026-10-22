@@ -627,7 +627,7 @@ function renderSaved() {
     wrap.className = "saved-group" + ((g.collapsed && !kw) ? " collapsed" : "");
     const head = document.createElement("button");
     head.className = "saved-group-head";
-    head.innerHTML = `<span class="arrow">▾</span>${escapeHtml(g.name)}`;
+    head.innerHTML = `<span class="arrow">▾</span>${escapeHtml(g.name)}<span class="cnt">${(g.requests || []).length}</span>`;
     head.addEventListener("click", () => {
       g.collapsed = !g.collapsed;
       wrap.classList.toggle("collapsed");
@@ -751,7 +751,7 @@ document.addEventListener("contextmenu", (e) => {
 });
 
 {
-  const savedSection = $("saved-list").closest(".side-section");
+  const savedSection = $("panel-saved");
   savedSection.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -762,11 +762,15 @@ document.addEventListener("contextmenu", (e) => {
 function renderHistory() {
   const box = $("history-list");
   box.innerHTML = "";
-  if (!state.history.length) {
-    box.innerHTML = '<div class="kv-empty">暂无历史</div>';
+  const q = (state.savedFilter || "").toLowerCase();
+  const list = q
+    ? state.history.filter((h) => (h.url || "").toLowerCase().includes(q) || (h.method || "").toLowerCase().includes(q))
+    : state.history;
+  if (!list.length) {
+    box.innerHTML = `<div class="kv-empty">${state.history.length ? "没有匹配的历史" : "暂无历史"}</div>`;
     return;
   }
-  state.history.forEach((h) => {
+  list.forEach((h) => {
     const el = document.createElement("div");
     el.className = "history-item";
     el.title = "点击在预览中查看";
@@ -1380,7 +1384,19 @@ function bindEvents() {
 
   // 侧边栏
   $("saved-new").addEventListener("click", () => { newTab(); toast("已新建空白请求"); });
-  $("saved-search").addEventListener("input", (e) => { state.savedFilter = e.target.value; renderSaved(); });
+  $("saved-search").addEventListener("input", (e) => { state.savedFilter = e.target.value; renderSaved(); renderHistory(); });
+  document.querySelectorAll(".side-tab").forEach((b) => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".side-tab").forEach((x) => x.classList.toggle("active", x === b));
+      const which = b.dataset.stab;
+      $("panel-saved").classList.toggle("hidden", which !== "saved");
+      $("panel-history").classList.toggle("hidden", which !== "history");
+      $("saved-new").classList.toggle("hidden", which !== "saved");
+      $("saved-collapse-all").classList.toggle("hidden", which !== "saved");
+      $("history-clear").classList.toggle("hidden", which !== "history");
+      $("saved-search").placeholder = which === "saved" ? "搜索请求..." : "搜索历史...";
+    });
+  });
   $("saved-collapse-all").addEventListener("click", () => {
     const groups = state.saved.groups || [];
     const anyOpen = groups.some((g) => !g.collapsed);

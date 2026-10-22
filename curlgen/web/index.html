@@ -18,33 +18,34 @@
     </div>
   </div>
 
-  <nav class="nav">
-    <button class="nav-item active" data-view="request"><span class="nav-ico">⚡</span>请求构建</button>
-    <button class="nav-item" id="nav-env"><span class="nav-ico">🌐</span>环境管理</button>
-    <button class="nav-item" id="nav-ssh"><span class="nav-ico">🖧</span>SSH 设置</button>
-    <button class="nav-item" id="nav-theme"><span class="nav-ico">🌓</span>切换主题</button>
-    <button class="nav-item" id="nav-legacy"><span class="nav-ico">↩</span>返回旧版</button>
-  </nav>
-
-  <div class="side-section" id="saved-section">
-    <div class="side-title">
-      <span>快捷请求</span>
-      <button class="side-add" id="saved-new" title="新建请求">＋</button>
-      <button class="side-add" id="saved-collapse-all" title="全部折叠">⇱</button>
-    </div>
-    <input id="saved-search" class="saved-search" type="text" placeholder="搜索请求...">
-    <div id="saved-list" class="side-list"></div>
+  <div class="side-tabs">
+    <button class="side-tab active" data-stab="saved">快捷请求</button>
+    <button class="side-tab" data-stab="history">历史记录</button>
   </div>
 
-  <div class="side-section grow" id="history-section">
-    <div class="side-title">
-      <span>历史记录</span>
-      <button class="side-add" id="history-clear" title="清空历史">🗑</button>
-    </div>
+  <div class="side-toolbar">
+    <input id="saved-search" class="saved-search" type="text" placeholder="搜索请求...">
+    <button class="side-add" id="saved-new" title="新建请求">＋</button>
+    <button class="side-add" id="saved-collapse-all" title="全部折叠">⇱</button>
+    <button class="side-add hidden" id="history-clear" title="清空历史">🗑</button>
+  </div>
+
+  <div class="side-panel" id="panel-saved">
+    <div id="saved-list" class="side-list"></div>
+  </div>
+  <div class="side-panel hidden" id="panel-history">
     <div id="history-list" class="side-list"></div>
   </div>
 
-  <div class="side-footer" id="conn-badge">● 本地模式</div>
+  <div class="side-footer">
+    <div class="side-icons">
+      <button class="side-icon" id="nav-env" title="环境管理">🌐</button>
+      <button class="side-icon" id="nav-ssh" title="SSH 设置">🖧</button>
+      <button class="side-icon" id="nav-theme" title="切换主题">🌓</button>
+      <button class="side-icon" id="nav-legacy" title="返回旧版">↩</button>
+    </div>
+    <div id="conn-badge" class="conn-badge">● 本地模式</div>
+  </div>
 </aside>
 
 <!-- ═══════════ 主区域 ═══════════ -->
