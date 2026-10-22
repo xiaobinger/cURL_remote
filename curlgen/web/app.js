@@ -36,6 +36,7 @@ const state = {
   saved: { groups: [] },
   history: [],
   ssh: {},
+  ai: {},
   savedFilter: "",
   vars: {},          // 脚本会话变量
   executing: false,
@@ -1406,6 +1407,87 @@ async function saveSsh() {
   } else toast("保存失败", "err");
 }
 
+/* ─────────── AI 脚本生成 ─────────── */
+const AI_PRESETS = {
+  qwen:     { base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", models: ["qwen-plus", "qwen-turbo", "qwen-max"] },
+  deepseek: { base_url: "https://api.deepseek.com/v1", models: ["deepseek-chat", "deepseek-reasoner"] },
+  kimi:     { base_url: "https://api.moonshot.cn/v1", models: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"] },
+};
+
+function applyAiPreset() {
+  const p = AI_PRESETS[$("ai-preset").value];
+  const list = $("ai-model-list");
+  list.innerHTML = "";
+  if (p) {
+    $("ai-base-url").value = p.base_url;
+    for (const m of p.models) {
+      const opt = document.createElement("option");
+      opt.value = m;
+      list.appendChild(opt);
+    }
+    if (!p.models.includes($("ai-model").value)) $("ai-model").value = p.models[0];
+  }
+}
+
+function openAiModal() {
+  const ai = state.ai || {};
+  $("ai-base-url").value = ai.base_url || "";
+  $("ai-api-key").value = ai.api_key || "";
+  $("ai-model").value = ai.model || "";
+  const preset = Object.keys(AI_PRESETS).find((k) => AI_PRESETS[k].base_url === ai.base_url) || "custom";
+  $("ai-preset").value = preset;
+  if (preset !== "custom") {
+    const p = AI_PRESETS[preset];
+    const list = $("ai-model-list");
+    list.innerHTML = "";
+    for (const m of p.models) {
+      const opt = document.createElement("option");
+      opt.value = m;
+      list.appendChild(opt);
+    }
+  } else $("ai-model-list").innerHTML = "";
+  openModal("modal-ai");
+}
+
+async function saveAiConfig() {
+  const data = {
+    base_url: $("ai-base-url").value.trim(),
+    api_key: $("ai-api-key").value.trim(),
+    model: $("ai-model").value.trim(),
+  };
+  const j = await api("/api/save_ai", data);
+  if (!j.ok) { toast("保存失败", "err"); return; }
+  state.ai = j.ai;
+  toast("AI 配置已保存 ✓", "ok");
+  closeModal();
+}
+
+async function generateAiScript(kind) {
+  const input = $(kind === "pre" ? "ai-pre-prompt" : "ai-post-prompt");
+  const btn = $(kind === "pre" ? "ai-pre-gen" : "ai-post-gen");
+  const prompt = input.value.trim();
+  if (!prompt) { toast("先描述一下想让脚本做什么", "err"); input.focus(); return; }
+  if (!(state.ai || {}).api_key) { openAiModal(); toast("请先配置大模型接口", "err"); return; }
+  btn.disabled = true;
+  const oldText = btn.textContent;
+  btn.textContent = "生成中…";
+  try {
+    const ctx = collectForm();
+    ctx.pre_script = state.preScript;
+    ctx.post_script = state.postScript;
+    const j = await api("/api/ai_script", { kind, prompt, context: ctx });
+    if (j.error) { toast(j.error, "err"); return; }
+    const ta = $(kind === "pre" ? "pre-script" : "post-script");
+    if (kind === "pre") state.preScript = j.script; else state.postScript = j.script;
+    ta.value = j.script;
+    markDirty();
+    toast("脚本已生成，可直接修改后再执行 ✓", "ok");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText;
+  }
+}
+
 /* ─────────── 事件流（轮询） ─────────── */
 async function pollEvents() {
   const j = await apiGet(`/api/events?since=${state.eventCursor}`);
@@ -1576,6 +1658,16 @@ function bindEvents() {
   $("nav-legacy").addEventListener("click", async () => {
     await api("/api/switch_legacy");
   });
+  $("nav-ai").addEventListener("click", openAiModal);
+  $("ai-preset").addEventListener("change", applyAiPreset);
+  $("ai-save").addEventListener("click", saveAiConfig);
+  $("ai-pre-gen").addEventListener("click", () => generateAiScript("pre"));
+  $("ai-post-gen").addEventListener("click", () => generateAiScript("post"));
+  for (const id of ["ai-pre-prompt", "ai-post-prompt"]) {
+    $(id).addEventListener("keydown", (e) => {
+      if (e.key === "Enter") $(id === "ai-pre-prompt" ? "ai-pre-gen" : "ai-post-gen").click();
+    });
+  }
   $("history-clear").addEventListener("click", async () => {
     await api("/api/clear_history");
     state.history = [];
@@ -1696,6 +1788,7 @@ async function init() {
     state.envs = j.envs || [];
     state.saved = j.saved || { groups: [] };
     state.ssh = j.ssh || {};
+    state.ai = j.ai || {};
     state.ssh_ready = !!j.ssh_ready;
     if (j.logo) $("brand-logo").src = j.logo;
     renderEnvSelect();

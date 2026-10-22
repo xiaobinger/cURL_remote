@@ -47,6 +47,7 @@
         <button class="side-icon" id="nav-theme" title="切换主题">🌓</button>
         <div class="theme-menu" id="theme-menu"></div>
       </span>
+      <button class="side-icon" id="nav-ai" title="AI 设置">🤖</button>
       <button class="side-icon" id="nav-legacy" title="返回旧版">↩</button>
     </div>
     <div id="conn-badge" class="conn-badge">● 本地模式</div>
@@ -147,11 +148,19 @@
       <div class="tab-page" data-page="scripts">
         <div class="script-block">
           <div class="script-title">前置脚本<span class="hint">生成 / 执行前运行（JavaScript）</span></div>
+          <div class="ai-row">
+            <input id="ai-pre-prompt" type="text" placeholder="描述需求，如：给请求加 timestamp 参数并写入 X-Sign 头">
+            <button class="btn btn-mini" id="ai-pre-gen">✨ AI 生成</button>
+          </div>
           <textarea id="pre-script" spellcheck="false"
             placeholder="// 例: pm.request.params.set('timestamp', Date.now())&#10;// pm.request.headers.set('X-Token', pm.variables.get('token'))"></textarea>
         </div>
         <div class="script-block">
           <div class="script-title">后置脚本<span class="hint">响应返回后运行（JavaScript）</span></div>
+          <div class="ai-row">
+            <input id="ai-post-prompt" type="text" placeholder="描述需求，如：把响应里的 token 存进变量">
+            <button class="btn btn-mini" id="ai-post-gen">✨ AI 生成</button>
+          </div>
           <textarea id="post-script" spellcheck="false"
             placeholder="// 例: const data = pm.response.json()&#10;// pm.variables.set('token', data.token)&#10;// console.log('耗时', pm.response.time + 'ms')"></textarea>
         </div>
@@ -278,6 +287,33 @@
       <span class="grow"></span>
       <button class="btn btn-ghost" data-close>取消</button>
       <button class="btn btn-primary" id="ssh-save">保存</button>
+    </div>
+  </div>
+
+  <!-- AI 设置 -->
+  <div class="modal" id="modal-ai">
+    <div class="modal-title">AI 脚本生成设置 <span class="modal-sub">OpenAI 兼容协议 · Key 仅存本地 ~/.cURL</span></div>
+    <label class="field">供应商预设
+      <select id="ai-preset" class="mini-select wide">
+        <option value="custom">自定义 / 中转站</option>
+        <option value="qwen">通义千问（DashScope）</option>
+        <option value="deepseek">DeepSeek</option>
+        <option value="kimi">Kimi（Moonshot）</option>
+      </select>
+    </label>
+    <label class="field">接口地址 base_url
+      <input id="ai-base-url" type="text" placeholder="https://api.deepseek.com/v1" spellcheck="false">
+    </label>
+    <label class="field">API Key
+      <input id="ai-api-key" type="password" placeholder="sk-..." spellcheck="false">
+    </label>
+    <label class="field">模型
+      <input id="ai-model" type="text" list="ai-model-list" placeholder="deepseek-chat" spellcheck="false">
+      <datalist id="ai-model-list"></datalist>
+    </label>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="ai-save">保存</button>
     </div>
   </div>
 </div>

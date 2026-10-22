@@ -1090,6 +1090,19 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
   transition: border-color .15s var(--ease);
 }
 .script-block textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ai-row { display: flex; gap: 6px; }
+.ai-row input {
+  flex: 1; min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-input);
+  color: var(--text-1);
+  font: 12px var(--font-ui);
+  outline: none;
+}
+.ai-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ai-row .btn { flex-shrink: 0; }
 
 /* ═══════════ 确认弹窗 ═══════════ */
 .confirm-text {

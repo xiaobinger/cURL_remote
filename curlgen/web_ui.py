@@ -26,6 +26,7 @@ from .config import (
     resolve_ssh_cfg, env_ssh_target_alias,
 )
 from .curl_builder import build_curl
+from .ai_client import load_ai_config, save_ai_config, generate_script
 from .ssh_executor import (
     LocalExecutor, SSHRemoteExecutor,
     ExecutionError, ExecutionTimeout, ExecutorStop,
@@ -83,6 +84,7 @@ class _ApiHandler(BaseHTTPRequestHandler):
                     "saved": load_saved_requests(),
                     "ssh": {k: v for k, v in ssh.items() if k != "jump_pass"},
                     "ssh_ready": ssh_ready,
+                    "ai": load_ai_config(),
                 })
             elif path == "/api/envs":
                 self._send_json(load_env_configs())
@@ -144,6 +146,20 @@ class _ApiHandler(BaseHTTPRequestHandler):
             elif path == "/api/test_ssh":
                 self.app.start_ssh_test(bool(data.get("target")), data.get("label"))
                 self._send_json({"ok": True})
+            elif path == "/api/save_ai":
+                self._send_json({"ok": True, "ai": save_ai_config(data)})
+            elif path == "/api/ai_script":
+                try:
+                    script = generate_script(
+                        load_ai_config(),
+                        data.get("kind", "pre"),
+                        (data.get("prompt") or "").strip(),
+                        data.get("context") or {},
+                    )
+                except ValueError as e:
+                    self._send_json({"error": str(e)})
+                    return
+                self._send_json({"ok": True, "script": script})
             elif path == "/api/switch_legacy":
                 self.app.sig_switch_legacy.emit()
                 self._send_json({"ok": True})
