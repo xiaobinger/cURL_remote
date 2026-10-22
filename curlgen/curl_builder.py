@@ -1,7 +1,9 @@
-"""cURL 命令构建（纯函数版，供新旧 UI 共用）
+"""cURL 命令构建 + 结构化请求解析（纯函数版，供新旧 UI 共用）
 
-从 main_window.generate_curl 提取，逻辑保持一致：
+resolve_request(data) 把表单数据解析成「最终要发送的请求」：
 环境变量替换 → 签名计算 → 参数拼接 → body 注入签名。
+build_curl(data) 在此基础上渲染 cURL 命令字符串；
+本地直发（http_executor）直接消费结构化结果，保证预览与实际发送一致。
 """
 import base64
 import json
@@ -14,6 +16,13 @@ logger = logging.getLogger("curlgen.curl_builder")
 
 NO_BODY_METHODS = ("GET", "HEAD", "OPTIONS")
 
+# 直接发送时的默认 Content-Type（与 curl -d 的行为对齐）
+DEFAULT_CONTENT_TYPE = {
+    "JSON": "application/json",
+    "Form Data": "application/x-www-form-urlencoded",
+    "Raw Text": "application/x-www-form-urlencoded",
+}
+
 
 def resolve_vars(text, var_map):
     """将 {{key}} 替换为环境变量值"""
@@ -24,15 +33,22 @@ def resolve_vars(text, var_map):
     return text
 
 
-def build_curl(data):
-    """根据请求数据 dict 生成 cURL 命令。
+def resolve_request(data):
+    """根据请求数据 dict 解析出最终要发送的结构化请求。
 
     data: {method, url, env, headers:[[k,v]...], params, body_type, body,
            auth_type, auth_value/auth_user+auth_pass/auth_header_name,
            ssl, silent, proxy, timeout}
-    返回 (curl_cmd, sign_preview)
+    返回 dict:
+      method, url            最终 URL（含 query 参数、GET 类签名）
+      headers                [[k, v]...] 鉴权头 + 用户头（按 curl 输出顺序）
+      body                   最终 body 文本（含签名注入），无则 None
+      form_lines             Form Data 的 k=v 行列表（供渲染多个 -d）
+      body_type              有效 body 类型
+      sign_preview           "签名: xxx" / "(签名已禁用)" / ""
+      verify_ssl             ssl 选项取反（-k → False）
+      proxy, timeout         解析后的代理 / 超时字符串
     """
-    parts = ["curl"]
     method = data.get("method", "GET")
     url = (data.get("url") or "").strip()
 
@@ -52,46 +68,32 @@ def build_curl(data):
                 var_map[ck] = cv
 
     url = resolve_vars(url, var_map)
-
-    if method != "GET":
-        parts.append(f"-X {method}")
-
-    if data.get("ssl"):
-        parts.append("-k")
-    if data.get("silent"):
-        parts.append("-s")
-
     proxy = resolve_vars((data.get("proxy") or "").strip(), var_map)
-    if proxy:
-        parts.append(f'-x "{proxy}"')
-
     timeout = (data.get("timeout") or "").strip()
-    if timeout:
-        parts.append(f"--max-time {timeout}")
+
+    headers = []
 
     # Auth
     auth_type = data.get("auth_type", "None")
     if auth_type == "Bearer Token":
         token = resolve_vars((data.get("auth_value") or "").strip(), var_map)
         if token:
-            parts.append(f'-H "Authorization: Bearer {token}"')
+            headers.append(["Authorization", f"Bearer {token}"])
     elif auth_type == "Basic Auth":
         u = resolve_vars((data.get("auth_user") or "").strip(), var_map)
         p = resolve_vars((data.get("auth_pass") or "").strip(), var_map)
         if u:
             creds = base64.b64encode(f"{u}:{p}".encode()).decode()
-            parts.append(f'-H "Authorization: Basic {creds}"')
+            headers.append(["Authorization", f"Basic {creds}"])
     elif auth_type == "API Key":
         h = (data.get("auth_header_name") or "X-API-Key").strip() or "X-API-Key"
         v = resolve_vars((data.get("auth_value") or "").strip(), var_map)
         if v:
-            parts.append(f'-H "{h}: {v}"')
+            headers.append([h, v])
 
     # Headers
     for k, v in data.get("headers", []):
-        k = resolve_vars(str(k), var_map)
-        v = resolve_vars(str(v), var_map)
-        parts.append(f'-H "{k}: {v}"')
+        headers.append([resolve_vars(str(k), var_map), resolve_vars(str(v), var_map)])
 
     # Query params
     params = [(resolve_vars(str(k), var_map), resolve_vars(str(v), var_map))
@@ -102,13 +104,13 @@ def build_curl(data):
     sign_param_name = "sign"
     sign_preview = ""
 
+    body_type = data.get("body_type", "JSON")
     if env_cfg:
         if env_cfg.get("enable_sign", True):
             secret_key = env_cfg.get("key", "")
             sign_algo = env_cfg.get("algo", "MD5")
             sign_param_name = env_cfg.get("param_name", "sign")
             all_params = dict(params)
-            body_type = data.get("body_type", "JSON")
             if method not in NO_BODY_METHODS and body_type != "None":
                 body_text = resolve_vars((data.get("body") or "").strip(), var_map)
                 if body_text:
@@ -159,48 +161,98 @@ def build_curl(data):
         separator = "&" if "?" in url else "?"
         url = f"{url}{separator}{sign_param_name}={sign_value}"
 
-    # Body
-    body_type = data.get("body_type", "JSON")
+    # Body（含签名注入）
+    body = None
+    form_lines = None
     if body_type != "None" and method not in NO_BODY_METHODS:
-        body = resolve_vars((data.get("body") or "").strip(), var_map)
-        if body:
+        raw = resolve_vars((data.get("body") or "").strip(), var_map)
+        if raw:
             if body_type == "JSON":
-                parts.append('-H "Content-Type: application/json"')
                 try:
-                    obj = json.loads(body)
+                    obj = json.loads(raw)
                     if sign_value:
                         obj[sign_param_name] = sign_value
                     body = json.dumps(obj, indent=2, ensure_ascii=False)
                 except json.JSONDecodeError:
+                    body = raw
                     if sign_value and body.rstrip().endswith("}"):
                         insert = f', "{sign_param_name}": "{sign_value}"'
                         body = body.rstrip()[:-1] + insert + "\n}"
-                parts.append(f"-d '{body}'")
             elif body_type == "Form Data":
-                form_lines = body.strip().splitlines()
+                form_lines = []
+                for ln in raw.strip().splitlines():
+                    ln = ln.strip()
+                    if "=" in ln:
+                        k, v = ln.split("=", 1)
+                        form_lines.append(f"{k.strip()}={v.strip()}")
                 if sign_value:
                     form_lines.append(f"{sign_param_name}={sign_value}")
-                for line in form_lines:
-                    line = line.strip()
-                    if "=" in line:
-                        k, v = line.split("=", 1)
-                        parts.append(f'-d "{k.strip()}={v.strip()}"')
+                body = "&".join(form_lines)  # curl 多个 -d 以 & 拼接
             else:
+                body = raw
                 if sign_value:
                     body += f"&{sign_param_name}={sign_value}"
-                parts.append(f"-d '{body}'")
-        else:
+        elif sign_value:
             # body 为空但有签名时，构造 body
-            if sign_value:
-                if body_type == "JSON":
-                    parts.append('-H "Content-Type: application/json"')
-                    obj = {sign_param_name: sign_value}
-                    parts.append(f"-d '{json.dumps(obj)}'")
-                elif body_type == "Form Data":
-                    parts.append(f'-d "{sign_param_name}={sign_value}"')
-                else:
-                    parts.append(f"-d \'{sign_param_name}={sign_value}\'")
+            if body_type == "JSON":
+                body = json.dumps({sign_param_name: sign_value})
+            elif body_type == "Form Data":
+                form_lines = [f"{sign_param_name}={sign_value}"]
+                body = form_lines[0]
+            else:
+                body = f"{sign_param_name}={sign_value}"
 
-    parts.append(f'"{url}"')
+    return {
+        "method": method,
+        "url": url,
+        "headers": headers,
+        "body": body,
+        "form_lines": form_lines,
+        "body_type": body_type,
+        "sign_preview": sign_preview,
+        "verify_ssl": not data.get("ssl"),
+        "proxy": proxy,
+        "timeout": timeout,
+    }
 
-    return " \\\n  ".join(parts), sign_preview
+
+def render_curl(req, silent=False):
+    """把 resolve_request 的结果渲染为 cURL 命令字符串（与原 build_curl 输出一致）"""
+    parts = ["curl"]
+    method = req["method"]
+
+    if method != "GET":
+        parts.append(f"-X {method}")
+    if not req["verify_ssl"]:
+        parts.append("-k")
+    if silent:
+        parts.append("-s")
+    if req["proxy"]:
+        parts.append(f'-x "{req["proxy"]}"')
+    if req["timeout"]:
+        parts.append(f"--max-time {req['timeout']}")
+
+    for k, v in req["headers"]:
+        parts.append(f'-H "{k}: {v}"')
+
+    body = req["body"]
+    if body is not None:
+        body_type = req["body_type"]
+        if body_type == "JSON":
+            parts.append('-H "Content-Type: application/json"')
+            parts.append(f"-d '{body}'")
+        elif body_type == "Form Data":
+            for line in req["form_lines"]:
+                if "=" in line:
+                    parts.append(f'-d "{line}"')
+        else:
+            parts.append(f"-d '{body}'")
+
+    parts.append(f'"{req["url"]}"')
+    return " \\\n  ".join(parts)
+
+
+def build_curl(data):
+    """根据请求数据 dict 生成 cURL 命令，返回 (curl_cmd, sign_preview)"""
+    req = resolve_request(data)
+    return render_curl(req, silent=bool(data.get("silent"))), req["sign_preview"]

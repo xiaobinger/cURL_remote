@@ -9,6 +9,7 @@
 import json
 import logging
 import os
+import re
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,14 +26,20 @@ from .config import (
     normalize_ssh_config, load_ssh_targets,
     resolve_ssh_cfg, env_ssh_target_alias,
 )
-from .curl_builder import build_curl
+from .curl_builder import build_curl, resolve_request, render_curl
 from .ai_client import load_ai_config, save_ai_config, generate_script
+from .http_executor import DirectHttpExecutor
 from .ssh_executor import (
-    LocalExecutor, SSHRemoteExecutor,
+    SSHRemoteExecutor,
     ExecutionError, ExecutionTimeout, ExecutorStop,
 )
 
 logger = logging.getLogger("curlgen.web_ui")
+
+# SSH 远程 curl -w 尾注标记（解析后不展示在输出区）
+SSH_META_MARK = "__CG_META__"
+SSH_META_RE = re.compile(r"__CG_META__:(\d{3}):([\d.]+):(\d+):([^\r\n]*)")
+SSH_META_FMT = ' -w "\\n__CG_META__:%{http_code}:%{time_total}:%{size_download}:%{content_type}"'
 
 # Web 前端资源目录（打包后位于 sys._MEIPASS/curlgen/web）
 if getattr(sys, "frozen", False):
@@ -240,12 +247,13 @@ class _ApiHandler(BaseHTTPRequestHandler):
         data = payload.get("data") or {}
         mode = payload.get("mode") or "local"
         try:
-            curl, _ = build_curl(data)
+            req = resolve_request(data)
+            curl = render_curl(req, silent=bool(data.get("silent")))
         except ValueError as e:
             self._send_json({"error": str(e)})
             return
         self.app.push_history(data, curl)
-        self.app.start_exec(data, curl, mode)
+        self.app.start_exec(data, curl, mode, req)
         self._send_json({"ok": True})
 
 
@@ -268,6 +276,8 @@ class WebCurlGenerator(QMainWindow):
         self.events = []           # 事件流（执行输出 / 通知 / 测试结果）
         self._exec_process = None
         self._exec_lock = threading.Lock()
+        self._exec_mode = None     # 当前执行模式（local/ssh），供输出回调区分
+        self._ssh_hold = ""        # SSH stdout 末行驻留缓冲（剥离 -w 尾注）
 
         _ApiHandler.app = self
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _ApiHandler)
@@ -346,7 +356,40 @@ class WebCurlGenerator(QMainWindow):
 
     # ──────────────────── 执行 ────────────────────
     def _on_exec_progress(self, tag, text):
+        # SSH 模式为剥离 curl -w 尾注：stdout 驻留最后一行缓冲，执行结束时统一处理
+        if self._exec_mode == "ssh" and tag == "stdout":
+            self._ssh_hold += text
+            idx = self._ssh_hold.rfind("\n")
+            if idx >= 0:
+                out, self._ssh_hold = self._ssh_hold[:idx + 1], self._ssh_hold[idx + 1:]
+                if out:
+                    self.push_event({"type": "output", "tag": tag, "text": out})
+            return
         self.push_event({"type": "output", "tag": tag, "text": text})
+
+    def _flush_ssh_hold(self):
+        """SSH 执行结束：解析驻留缓冲里的 -w 尾注，推送 http_resp 事件并回显剩余内容"""
+        hold, self._ssh_hold = self._ssh_hold, ""
+        if not hold:
+            return
+        m = SSH_META_RE.search(hold)
+        if m:
+            hold = SSH_META_RE.sub("", hold).strip("\r\n")
+            try:
+                self.push_event({
+                    "type": "http_resp",
+                    "status": int(m.group(1)),
+                    "reason": "",
+                    "headers": [],
+                    "elapsed_ms": int(float(m.group(2)) * 1000),
+                    "size": int(m.group(3)),
+                    "content_type": m.group(4).strip(),
+                    "url": "",
+                })
+            except ValueError:
+                logger.warning("SSH 尾注解析失败: %s", m.group(0))
+        if hold:
+            self.push_event({"type": "output", "tag": "stdout", "text": hold})
 
     @staticmethod
     def _parse_timeout(data):
@@ -356,15 +399,19 @@ class WebCurlGenerator(QMainWindow):
         except ValueError:
             return 30
 
-    def start_exec(self, data, curl, mode):
+    def start_exec(self, data, curl, mode, req=None):
         with self._exec_lock:
             if self._exec_process is not None:
                 self.push_event({"type": "notify", "text": "已有任务在执行中", "kind": "busy"})
                 return
         logger.info("开始执行请求 (mode=%s)", mode)
+        self._exec_mode = mode
+        self._ssh_hold = ""
 
         ssh_cfg = None
         if mode == "ssh":
+            # 远程 curl 追加 -w 尾注，用于解析 HTTP 状态/耗时/体积（前端不展示）
+            curl = curl + SSH_META_FMT
             # 按当前环境解析 SSH 目标机（环境启用 SSH 时用其绑定标签，否则用第一个目标机）
             env_alias = data.get("env")
             label = env_ssh_target_alias(env_alias)
@@ -389,33 +436,44 @@ class WebCurlGenerator(QMainWindow):
                 if mode == "ssh":
                     executor = SSHRemoteExecutor(ssh_cfg, on_progress=self._on_exec_progress)
                 else:
-                    executor = LocalExecutor(on_progress=self._on_exec_progress)
+                    # 本地直发：直接用 Python 发 HTTP，不再 shell 调 curl
+                    executor = DirectHttpExecutor(on_progress=self._on_exec_progress,
+                                                  on_event=self.push_event)
                 self._exec_process = executor
                 try:
-                    result = executor.run(curl, timeout=timeout)
+                    if mode == "ssh":
+                        result = executor.run(curl, timeout=timeout)
+                    else:
+                        result = executor.run(req, timeout=timeout)
                     code = result.get("exit_code", 0)
                     if code < 0 and result.get("stderr"):
                         self.push_event({"type": "output", "tag": "stderr",
                                          "text": f"[错误] {result['stderr'].strip()}"})
+                    self._flush_ssh_hold()
                     self.push_event({"type": "finished", "code": code})
                 finally:
                     if mode == "ssh":
                         executor.close()
             except ExecutorStop as e:
+                self._flush_ssh_hold()
                 self.push_event({"type": "output", "tag": "stderr", "text": f"[错误] 执行已停止: {e}"})
                 self.push_event({"type": "finished", "code": -2})
             except ExecutionTimeout as e:
+                self._flush_ssh_hold()
                 self.push_event({"type": "output", "tag": "stderr", "text": f"[错误] {e}"})
                 self.push_event({"type": "finished", "code": -3})
             except ExecutionError as e:
+                self._flush_ssh_hold()
                 prefix = "SSH 失败" if mode == "ssh" else "执行失败"
                 self.push_event({"type": "output", "tag": "stderr", "text": f"[错误] {prefix}: {e}"})
                 self.push_event({"type": "finished", "code": -1})
             except Exception as e:
                 logger.exception("执行异常")
+                self._flush_ssh_hold()
                 self.push_event({"type": "output", "tag": "stderr", "text": f"[错误] 执行异常: {e}"})
                 self.push_event({"type": "finished", "code": -1})
             finally:
+                self._exec_mode = None
                 with self._exec_lock:
                     self._exec_process = None
 

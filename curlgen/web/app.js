@@ -47,6 +47,7 @@ const state = {
   respElapsed: 0,
   respStartTs: 0,
   respPretty: true,
+  lastHttpResp: null,  // 最近一次执行的 HTTP 响应元信息
   // ── Console（当前执行条目 + 前置脚本结果暂存） ──
   execEntry: null,
   preResult: null,
@@ -170,6 +171,74 @@ function syncBodyHighlight() {
   hl.scrollTop = ta.scrollTop;
   hl.scrollLeft = ta.scrollLeft;
   hideRefTip();
+}
+
+/* ─────────── URL 地址栏高亮（{{变量}} + query 参数） ─────────── */
+function highlightEnvRefs(s) {
+  return escapeHtml(s).replace(/\{\{[^{}]*\}\}/g, (m) => {
+    const key = m.slice(2, -2);
+    return '<span class="env-ref" data-ref="' + escapeHtml(key) + '">' + m + '</span>';
+  });
+}
+
+function urlHighlightHtml(text) {
+  const qIdx = text.indexOf("?");
+  const base = qIdx >= 0 ? text.slice(0, qIdx) : text;
+  const query = qIdx >= 0 ? text.slice(qIdx + 1) : "";
+  let html = highlightEnvRefs(base);
+  if (qIdx >= 0) {
+    html += '<span class="url-sep">?</span>';
+    html += query.split("&").map((pair) => {
+      const eq = pair.indexOf("=");
+      if (eq >= 0) {
+        const k = pair.slice(0, eq), v = pair.slice(eq + 1);
+        return `<span class="url-param" data-pk="${escapeHtml(k)}" data-pv="${escapeHtml(v)}">` +
+               `<span class="url-pk">${highlightEnvRefs(k)}</span><span class="url-sep">=</span>` +
+               `<span class="url-pv">${highlightEnvRefs(v)}</span></span>`;
+      }
+      return `<span class="url-param" data-pk="${escapeHtml(pair)}" data-pv="">` +
+             `<span class="url-pk">${highlightEnvRefs(pair)}</span></span>`;
+    }).join('<span class="url-sep">&amp;</span>');
+  }
+  return html;
+}
+
+function syncUrlHighlight() {
+  const inp = $("url-input");
+  const hl = $("url-hl");
+  if (!inp || !hl) return;
+  hl.innerHTML = urlHighlightHtml(inp.value);
+  hl.scrollLeft = inp.scrollLeft;
+  hideRefTip();
+}
+
+function resolveVarText(v) {
+  const map = envVarMap();
+  return String(v).replace(/\{\{([^{}]*)\}\}/g, (m, key) =>
+    Object.prototype.hasOwnProperty.call(map, key) ? map[key] : m);
+}
+
+function handleUrlHover(e) {
+  const hl = $("url-hl");
+  if (!hl) return;
+  // env-ref 优先（嵌套在 url-param 内部）
+  const spans = [...hl.querySelectorAll(".env-ref"), ...hl.querySelectorAll(".url-param")];
+  let hit = null;
+  for (const s of spans) {
+    const r = s.getBoundingClientRect();
+    if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) { hit = s; break; }
+  }
+  if (!hit) { hideRefTip(); return; }
+  if (hit.classList.contains("env-ref")) {
+    const key = hit.getAttribute("data-ref") || "";
+    const map = envVarMap();
+    const hasVal = Object.prototype.hasOwnProperty.call(map, key);
+    showRefTip(key, hasVal ? map[key] : "", hasVal, e.clientX, e.clientY);
+  } else {
+    const k = hit.getAttribute("data-pk") || "";
+    const v = hit.getAttribute("data-pv") || "";
+    showRefTip(resolveVarText(k), resolveVarText(v), true, e.clientX, e.clientY);
+  }
 }
 
 /* ─────────── 引用悬浮提示：显示解析后的实际值 ─────────── */
@@ -472,6 +541,7 @@ function syncControlsFromState() {
   setMethodChip(state.method);
   // URL / 环境
   $("url-input").value = state.url;
+  syncUrlHighlight();
   renderEnvSelect();
   // KV
   renderKV($("headers-table"), state.headers, "headers");
@@ -610,6 +680,9 @@ function updateConnBadge() {
   } else {
     badge.textContent = "● 本地模式";
   }
+  // SSH 请求按钮仅在当前环境开启 SSH 时显示
+  const sshFab = $("btn-ssh-exec");
+  if (sshFab) sshFab.classList.toggle("hidden", !(env && env.use_ssh));
 }
 
 /* ─────────── 方法下拉 ─────────── */
@@ -1039,6 +1112,7 @@ function respClear() {
   state.respRaw = "";
   state.respCode = null;
   state.respElapsed = 0;
+  state.lastHttpResp = null;
   $("response-view").textContent = "";
   $("response-view").classList.remove("streaming");
   $("resp-meta").textContent = "";
@@ -1088,7 +1162,12 @@ function respFinalize(code) {
   const elapsed = state.respStartTs ? (Date.now() - state.respStartTs) / 1000 : 0;
   state.respElapsed = Math.round(elapsed * 1000);
   const size = new Blob([state.respRaw]).size;
-  $("resp-meta").textContent = `exit ${code} · ${elapsed.toFixed(2)}s · ${fmtSize(size)}`;
+  const h = state.lastHttpResp;
+  if (h && h.status) {
+    $("resp-meta").textContent = `HTTP ${h.status}${h.reason ? " " + h.reason : ""} · ${(h.elapsed_ms / 1000).toFixed(2)}s · ${fmtSize(h.size)}`;
+  } else {
+    $("resp-meta").textContent = `exit ${code} · ${elapsed.toFixed(2)}s · ${fmtSize(size)}`;
+  }
   renderRespBody();
 }
 function showPpage(name) {
@@ -1122,6 +1201,8 @@ function consoleBegin(mode) {
     postLogs: [],
     postError: null,
     output: "",
+    httpReq: null,   // 实际发送的请求（结构化事件回填）
+    httpResp: null,  // 实际收到的响应元信息（状态/响应头/耗时/体积）
     code: null,
     statusText: "执行中…",
     elapsedMs: 0,
@@ -1189,15 +1270,29 @@ function kvText(list) {
   return list.map(([k, v]) => `${k}: ${v}`).join("\n");
 }
 
+function httpStatusCls(status) {
+  if (status >= 200 && status < 300) return "ok";
+  if (status >= 300 && status < 400) return "busy";
+  return "err";
+}
+
 function consoleEntryEl(e) {
   const el = document.createElement("div");
   el.className = "console-entry" + (e.open ? " open" : "");
   el.dataset.eid = e.id;
   const mc = METHOD_COLORS[e.method] || "var(--accent)";
-  const badgeCls = !e.done ? "busy" : (e.code === 0 ? "ok" : "err");
-  const meta = e.done
-    ? `${e.statusText} · ${(e.elapsedMs / 1000).toFixed(2)}s · ${fmtSize(e.size)}`
-    : "执行中…";
+  const h = e.httpResp;
+  let badgeCls, meta;
+  if (!e.done) {
+    badgeCls = "busy";
+    meta = "执行中…";
+  } else if (h && h.status) {
+    badgeCls = httpStatusCls(h.status);
+    meta = `HTTP ${h.status}${h.reason ? " " + h.reason : ""} · ${(h.elapsed_ms / 1000).toFixed(2)}s · ${fmtSize(h.size)}`;
+  } else {
+    badgeCls = e.code === 0 ? "ok" : "err";
+    meta = `${e.statusText} · ${(e.elapsedMs / 1000).toFixed(2)}s · ${fmtSize(e.size)}`;
+  }
   const head = document.createElement("div");
   head.className = "ce-head";
   head.innerHTML =
@@ -1215,23 +1310,45 @@ function consoleEntryEl(e) {
 
   const body = document.createElement("div");
   body.className = "ce-body";
-  body.appendChild(ceSec("请求", `${e.method} ${e.url}`));
-  body.appendChild(ceSec("Request Headers", kvText(e.headers)));
-  body.appendChild(ceSec("Query Params", kvText(e.params)));
-  if (e.body && e.body.trim()) {
-    body.appendChild(ceSec(`Request Body (${e.bodyType})`, e.body));
+
+  // ── 概览（Postman 风格：请求行 + 状态行 + 耗时/体积） ──
+  const overview = [`${e.method} ${e.url}`];
+  if (h && h.status) {
+    overview.push(`Status: HTTP ${h.status}${h.reason ? " " + h.reason : ""}`);
+    overview.push(`Time: ${h.elapsed_ms} ms    Size: ${fmtSize(h.size)}`);
+    if (h.url && h.url !== e.url) overview.push(`最终 URL（重定向后）: ${h.url}`);
+    if (h.content_type) overview.push(`Content-Type: ${h.content_type}`);
+  } else if (e.done) {
+    overview.push(`Status: ${e.statusText}    Time: ${(e.elapsedMs / 1000).toFixed(2)}s    Size: ${fmtSize(e.size)}`);
+  } else {
+    overview.push("Status: 执行中…");
   }
-  if (e.curl) body.appendChild(ceSec("cURL 命令", e.curl));
+  body.appendChild(ceSec("概览", overview.join("\n")));
+
+  // ── Request（优先展示实际发送的报文） ──
+  const reqHeaders = (e.httpReq && e.httpReq.headers && e.httpReq.headers.length) ? e.httpReq.headers : e.headers;
+  body.appendChild(ceSec("Request Headers", kvText(reqHeaders)));
+  const reqBody = e.httpReq && e.httpReq.body ? e.httpReq.body : e.body;
+  if (reqBody && reqBody.trim()) {
+    body.appendChild(ceSec(`Request Body (${e.bodyType})`, reqBody));
+  }
+
+  // ── Response ──
+  if (h && h.headers && h.headers.length) {
+    body.appendChild(ceSec("Response Headers", kvText(h.headers)));
+  }
+  body.appendChild(ceSec(
+    e.done ? "Response Body" : "Response Body（接收中…）",
+    consoleOutputText(e) || "（暂无输出）",
+    "ce-output"
+  ));
+
+  if (e.curl) body.appendChild(ceSec("cURL 等效命令", e.curl));
   const scriptLines = [];
   e.preLogs.forEach((l) => scriptLines.push(`[前置] ${l}`));
   e.postLogs.forEach((l) => scriptLines.push(`[后置] ${l}`));
   if (e.postError) scriptLines.push(`[后置脚本错误] ${e.postError}`);
   if (scriptLines.length) body.appendChild(ceSec("脚本日志", scriptLines.join("\n")));
-  body.appendChild(ceSec(
-    e.done ? `响应（${e.statusText} · ${(e.elapsedMs / 1000).toFixed(2)}s · ${fmtSize(e.size)}）` : "响应（执行中…）",
-    consoleOutputText(e) || "（暂无输出）",
-    "ce-output"
-  ));
   el.appendChild(body);
   return el;
 }
@@ -1270,7 +1387,7 @@ function buildPm(kind) {
       get method() { return state.method; },
       set method(v) { state.method = String(v).toUpperCase(); },
       get url() { return $("url-input").value; },
-      set url(v) { $("url-input").value = String(v); },
+      set url(v) { $("url-input").value = String(v); syncUrlHighlight(); },
       get body() { return $("body-input").value; },
       set body(v) { $("body-input").value = String(v); syncBodyHighlight(); },
       headers: kvFacade("headers"),
@@ -1807,6 +1924,13 @@ async function pollEvents() {
     if (ev.type === "output") {
       if (ev.tag === "info") { respAppend(`[${ev.text.trim()}]`); consoleAppend(`[${ev.text.trim()}]`); }
       else { const s = ev.text.replace(/\r?\n$/, ""); respAppend(s); consoleAppend(s); }
+    } else if (ev.type === "http_req") {
+      // 实际发送的请求报文（本地直发才有）
+      if (state.execEntry) state.execEntry.httpReq = ev;
+    } else if (ev.type === "http_resp") {
+      // 实际收到的响应元信息（本地直发 / SSH 尾注解析）
+      state.lastHttpResp = ev;
+      if (state.execEntry) state.execEntry.httpResp = ev;
     } else if (ev.type === "finished") {
       state.executing = false;
       $("btn-exec").disabled = false;
@@ -1816,7 +1940,12 @@ async function pollEvents() {
       refreshHistory();
       const code = ev.code;
       let txt, kind;
-      if (code === 0) { txt = "成功 (exit 0)"; kind = "ok"; }
+      const h = state.lastHttpResp;
+      if (h && h.status) {
+        txt = `HTTP ${h.status}${h.reason ? " " + h.reason : ""}`;
+        kind = httpStatusCls(h.status);
+      }
+      else if (code === 0) { txt = "成功 (exit 0)"; kind = "ok"; }
       else if (code === -1) { txt = "失败"; kind = "err"; }
       else if (code === -2) { txt = "已停止"; kind = "busy"; }
       else if (code === -3) { txt = "超时"; kind = "err"; }
@@ -1882,7 +2011,14 @@ function bindEvents() {
   });
 
   // URL / KV 增删
-  $("url-input").addEventListener("input", markDirty);
+  $("url-input").addEventListener("input", () => { syncUrlHighlight(); markDirty(); });
+  $("url-input").addEventListener("scroll", () => {
+    const hl = $("url-hl");
+    if (hl) hl.scrollLeft = $("url-input").scrollLeft;
+    hideRefTip();
+  });
+  $("url-input").addEventListener("mousemove", handleUrlHover);
+  $("url-input").addEventListener("mouseleave", hideRefTip);
   $("headers-add").addEventListener("click", () => { state.headers.push(["", "", true]); markDirty(); renderKV($("headers-table"), state.headers, "headers"); });
   $("headers-clear").addEventListener("click", () => { state.headers = []; markDirty(); renderKV($("headers-table"), state.headers, "headers"); });
   $("params-add").addEventListener("click", () => { state.params.push(["", "", true]); markDirty(); renderKV($("params-table"), state.params, "params"); });

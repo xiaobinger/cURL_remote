@@ -66,8 +66,11 @@
         <button id="method-btn" class="method-chip">GET <i>▾</i></button>
         <div class="method-menu" id="method-menu"></div>
       </div>
-      <input id="url-input" class="url-input" type="text"
-             placeholder="https://api.example.com/v1/resource" spellcheck="false">
+      <div class="url-wrap" id="url-wrap">
+        <div class="url-hl" id="url-hl" aria-hidden="true"></div>
+        <input id="url-input" class="url-input" type="text"
+               placeholder="https://api.example.com/v1/resource" spellcheck="false">
+      </div>
       <div class="env-wrap">
         <select id="env-select" class="env-select"></select>
         <span class="sign-preview" id="sign-preview"></span>
