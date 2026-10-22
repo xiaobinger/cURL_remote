@@ -933,10 +933,42 @@ function parseImportText(text) {
   try { doc = JSON.parse(text); } catch (e) { throw new Error("不是有效的 JSON 文件"); }
   if (doc && doc.info && Array.isArray(doc.item)) return parsePostman(doc);
   if (doc && (doc.openapi || doc.swagger)) return parseOpenApi(doc);
-  throw new Error("无法识别的格式：支持 Postman Collection v2.1 或 OpenAPI 3 (JSON)");
+  throw new Error("无法识别的格式：支持 Postman Collection v2.1 / 环境变量 或 OpenAPI 3 (JSON)");
+}
+
+/* ─────────── 导入：Postman 环境变量 ─────────── */
+function isPostmanEnv(doc) {
+  return doc && typeof doc.name === "string" && Array.isArray(doc.values) && !doc.item && !doc.openapi;
+}
+async function importPostmanEnv(doc) {
+  const alias = (doc.name || "").trim() || "Postman 环境";
+  const params = (doc.values || [])
+    .filter((v) => v && v.key && v.enabled !== false)
+    .map((v) => [String(v.key), v.value == null ? "" : String(v.value)]);
+  if (!params.length) { toast("环境文件里没有可用变量", "err"); return; }
+  const exist = state.envs.find((e) => e.alias === alias);
+  if (exist) {
+    const map = new Map((exist.custom_params || []).map((p) => [p[0], p[1]]));
+    params.forEach(([k, v]) => map.set(k, v));
+    exist.custom_params = [...map.entries()];
+  } else {
+    state.envs.push({
+      alias, key: "", algo: "MD5", param_name: "sign", enable_sign: false,
+      custom_params: params, use_ssh: false, ssh_target: "",
+    });
+  }
+  const j = await api("/api/save_envs", state.envs);
+  if (!j.ok) { toast("保存失败", "err"); return; }
+  renderEnvSelect();
+  toast(exist
+    ? `已合并 ${params.length} 个变量到环境「${alias}」✓`
+    : `已导入环境「${alias}」(${params.length} 个变量)，右上角选择即用 ✓`, "ok");
 }
 async function doImportFile(file) {
   const text = await file.text();
+  let doc;
+  try { doc = JSON.parse(text); } catch (e) { toast("不是有效的 JSON 文件", "err"); return; }
+  if (isPostmanEnv(doc)) { await importPostmanEnv(doc); return; }
   const groups = parseImportText(text);
   if (!groups.length) { toast("文件里没有可导入的请求", "err"); return; }
   const j = await api("/api/import_requests", { groups });
