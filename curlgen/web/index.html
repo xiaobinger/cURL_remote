@@ -148,21 +148,19 @@
       <div class="tab-page" data-page="scripts">
         <div class="script-block">
           <div class="script-title">前置脚本<span class="hint">生成 / 执行前运行（JavaScript）</span></div>
-          <div class="ai-row">
-            <input id="ai-pre-prompt" type="text" placeholder="描述需求，如：给请求加 timestamp 参数并写入 X-Sign 头">
-            <button class="btn btn-mini" id="ai-pre-gen">✨ AI 生成</button>
+          <div class="script-editor">
+            <textarea id="pre-script" spellcheck="false"
+              placeholder="// 例: pm.request.params.set('timestamp', Date.now())&#10;// pm.request.headers.set('X-Token', pm.variables.get('token'))"></textarea>
+            <button class="ai-fab" id="ai-pre-fab" title="AI 智能生成前置脚本">✨ AI</button>
           </div>
-          <textarea id="pre-script" spellcheck="false"
-            placeholder="// 例: pm.request.params.set('timestamp', Date.now())&#10;// pm.request.headers.set('X-Token', pm.variables.get('token'))"></textarea>
         </div>
         <div class="script-block">
           <div class="script-title">后置脚本<span class="hint">响应返回后运行（JavaScript）</span></div>
-          <div class="ai-row">
-            <input id="ai-post-prompt" type="text" placeholder="描述需求，如：把响应里的 token 存进变量">
-            <button class="btn btn-mini" id="ai-post-gen">✨ AI 生成</button>
+          <div class="script-editor">
+            <textarea id="post-script" spellcheck="false"
+              placeholder="// 例: const data = pm.response.json()&#10;// pm.variables.set('token', data.token)&#10;// console.log('耗时', pm.response.time + 'ms')"></textarea>
+            <button class="ai-fab" id="ai-post-fab" title="AI 智能生成后置脚本">✨ AI</button>
           </div>
-          <textarea id="post-script" spellcheck="false"
-            placeholder="// 例: const data = pm.response.json()&#10;// pm.variables.set('token', data.token)&#10;// console.log('耗时', pm.response.time + 'ms')"></textarea>
         </div>
       </div>
     </section>
@@ -314,6 +312,21 @@
     <div class="modal-btns">
       <button class="btn btn-ghost" data-close>取消</button>
       <button class="btn btn-primary" id="ai-save">保存</button>
+    </div>
+  </div>
+
+  <!-- AI 生成对话框 -->
+  <div class="modal modal-sm" id="modal-ai-gen">
+    <div class="modal-title" id="ai-gen-title">✨ AI 生成脚本</div>
+    <label class="field">描述想让脚本做什么
+      <textarea id="ai-gen-prompt" rows="3" spellcheck="false"
+        placeholder="如：给请求加 timestamp 参数并写入 X-Sign 头"></textarea>
+    </label>
+    <pre class="ai-gen-result" id="ai-gen-result" hidden></pre>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="ai-gen-run">✨ 生成</button>
+      <button class="btn btn-apply" id="ai-gen-apply" hidden>✓ 应用</button>
     </div>
   </div>
 </div>

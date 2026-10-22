@@ -1090,19 +1090,65 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
   transition: border-color .15s var(--ease);
 }
 .script-block textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.ai-row { display: flex; gap: 6px; }
-.ai-row input {
-  flex: 1; min-width: 0;
-  padding: 6px 10px;
+.script-editor { position: relative; flex: 1; min-height: 0; display: flex; }
+.script-editor textarea { width: 100%; }
+.ai-fab {
+  position: absolute; right: 10px; bottom: 10px;
+  padding: 4px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--bg-panel-solid);
+  color: var(--accent);
+  font: 600 11px var(--font-ui);
+  cursor: pointer;
+  opacity: .75;
+  transition: all .18s var(--ease);
+  box-shadow: 0 2px 10px var(--chip-shadow);
+}
+.ai-fab:hover {
+  opacity: 1;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 4px 16px var(--accent-shadow-hover);
+  transform: translateY(-1px);
+}
+
+/* AI 生成对话框 */
+.modal-sm { width: 460px; }
+.field textarea {
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--bg-input);
   color: var(--text-1);
-  font: 12px var(--font-ui);
+  font: 12px/1.6 var(--font-ui);
   outline: none;
+  resize: vertical;
 }
-.ai-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.ai-row .btn { flex-shrink: 0; }
+.field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ai-gen-result {
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-input);
+  color: var(--text-1);
+  font: 12px/1.6 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.btn-apply {
+  background: var(--green);
+  color: #fff;
+  border: 1px solid var(--green);
+  border-radius: var(--r-sm);
+  padding: 7px 18px;
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+  transition: all .18s var(--ease);
+}
+.btn-apply:hover { box-shadow: 0 4px 14px var(--green-shadow); transform: translateY(-1px); }
 
 /* ═══════════ 确认弹窗 ═══════════ */
 .confirm-text {

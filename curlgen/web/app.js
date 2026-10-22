@@ -1468,30 +1468,62 @@ async function saveAiConfig() {
   closeModal();
 }
 
-async function generateAiScript(kind) {
-  const input = $(kind === "pre" ? "ai-pre-prompt" : "ai-post-prompt");
-  const btn = $(kind === "pre" ? "ai-pre-gen" : "ai-post-gen");
-  const prompt = input.value.trim();
-  if (!prompt) { toast("先描述一下想让脚本做什么", "err"); input.focus(); return; }
+/* ─────────── AI 生成对话框 ─────────── */
+const aiGen = { kind: "pre", script: "" };
+
+function openAiGenModal(kind) {
   if (!(state.ai || {}).api_key) { openAiModal(); toast("请先配置大模型接口", "err"); return; }
-  btn.disabled = true;
-  const oldText = btn.textContent;
-  btn.textContent = "生成中…";
+  aiGen.kind = kind;
+  aiGen.script = "";
+  $("ai-gen-title").textContent = kind === "pre" ? "✨ AI 生成前置脚本" : "✨ AI 生成后置脚本";
+  $("ai-gen-prompt").placeholder = kind === "pre"
+    ? "如：给请求加 timestamp 参数并写入 X-Sign 头"
+    : "如：把响应里的 token 存进变量，打印耗时";
+  $("ai-gen-prompt").value = "";
+  const res = $("ai-gen-result");
+  res.hidden = true;
+  res.textContent = "";
+  $("ai-gen-apply").hidden = true;
+  const run = $("ai-gen-run");
+  run.disabled = false;
+  run.textContent = "✨ 生成";
+  openModal("modal-ai-gen");
+  setTimeout(() => $("ai-gen-prompt").focus(), 50);
+}
+
+async function runAiGen() {
+  const prompt = $("ai-gen-prompt").value.trim();
+  if (!prompt) { toast("先描述一下想让脚本做什么", "err"); $("ai-gen-prompt").focus(); return; }
+  const run = $("ai-gen-run");
+  run.disabled = true;
+  run.textContent = "生成中…";
+  $("ai-gen-apply").hidden = true;
   try {
     const ctx = collectForm();
     ctx.pre_script = state.preScript;
     ctx.post_script = state.postScript;
-    const j = await api("/api/ai_script", { kind, prompt, context: ctx });
+    const j = await api("/api/ai_script", { kind: aiGen.kind, prompt, context: ctx });
     if (j.error) { toast(j.error, "err"); return; }
-    const ta = $(kind === "pre" ? "pre-script" : "post-script");
-    if (kind === "pre") state.preScript = j.script; else state.postScript = j.script;
-    ta.value = j.script;
-    markDirty();
-    toast("脚本已生成，可直接修改后再执行 ✓", "ok");
+    aiGen.script = j.script;
+    const res = $("ai-gen-result");
+    res.textContent = j.script;
+    res.hidden = false;
+    $("ai-gen-apply").hidden = false;
+    run.textContent = "↻ 重新生成";
   } finally {
-    btn.disabled = false;
-    btn.textContent = oldText;
+    run.disabled = false;
+    if (run.textContent === "生成中…") run.textContent = "✨ 生成";
   }
+}
+
+function applyAiGen() {
+  if (!aiGen.script) return;
+  const ta = $(aiGen.kind === "pre" ? "pre-script" : "post-script");
+  if (aiGen.kind === "pre") state.preScript = aiGen.script; else state.postScript = aiGen.script;
+  ta.value = aiGen.script;
+  markDirty();
+  closeModal();
+  toast("脚本已应用，可直接修改后再执行 ✓", "ok");
 }
 
 /* ─────────── 事件流（轮询） ─────────── */
@@ -1667,13 +1699,13 @@ function bindEvents() {
   $("nav-ai").addEventListener("click", openAiModal);
   $("ai-preset").addEventListener("change", applyAiPreset);
   $("ai-save").addEventListener("click", saveAiConfig);
-  $("ai-pre-gen").addEventListener("click", () => generateAiScript("pre"));
-  $("ai-post-gen").addEventListener("click", () => generateAiScript("post"));
-  for (const id of ["ai-pre-prompt", "ai-post-prompt"]) {
-    $(id).addEventListener("keydown", (e) => {
-      if (e.key === "Enter") $(id === "ai-pre-prompt" ? "ai-pre-gen" : "ai-post-gen").click();
-    });
-  }
+  $("ai-pre-fab").addEventListener("click", () => openAiGenModal("pre"));
+  $("ai-post-fab").addEventListener("click", () => openAiGenModal("post"));
+  $("ai-gen-run").addEventListener("click", runAiGen);
+  $("ai-gen-apply").addEventListener("click", applyAiGen);
+  $("ai-gen-prompt").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("ai-gen-run").click();
+  });
   $("history-clear").addEventListener("click", async () => {
     await api("/api/clear_history");
     state.history = [];

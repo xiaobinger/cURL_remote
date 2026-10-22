@@ -115,7 +115,7 @@
 - 侧栏页签式（快捷请求 / 历史记录切换）+ 搜索 + 请求项右键（新标签打开 / 重命名 / 删除）+ 分组计数徽章；设置类入口收纳为底部图标行
 - **一键导入** Postman Collection v2.1 / OpenAPI 3（Apifox 可导出）：分组、鉴权、前后置脚本全映射，同名自动合并
 - KV 行启用勾选：禁用的 Header / Param 不进生成的命令
-- **前后置脚本**：JavaScript 沙箱 + Postman 风格 `pm` API；**AI 智能生成**（OpenAI 兼容协议，内置通义 / DeepSeek / Kimi 预设，支持自定义中转站，Key 仅存本地）
+- **前后置脚本**：JavaScript 沙箱 + Postman 风格 `pm` API；**AI 智能生成**——脚本框右下角 ✨ AI 按钮唤起生成对话框，描述需求→生成预览→一键应用回填（OpenAI 兼容协议，内置通义 / DeepSeek / Kimi 预设，支持自定义中转站，Key 仅存本地）
 - 按天滚动日志（保留 30 天）
 - PyInstaller 单文件打包，免环境运行
 
