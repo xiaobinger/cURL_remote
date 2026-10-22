@@ -38,6 +38,7 @@ const state = {
   ssh: {},
   ai: {},
   savedFilter: "",
+  sessionExec: { total: 0, ok: 0 },  // 本次会话执行统计（成功率按 HTTP<400 或传输成功计）
   vars: {},          // 脚本会话变量
   executing: false,
   eventCursor: 0,
@@ -378,6 +379,7 @@ function newTab(snap, saved) {
   renderTabs();
   renderSaved();
   renderConsole();
+  syncDashboard();
   return t;
 }
 
@@ -424,20 +426,20 @@ function actuallyCloseTab(id) {
   state.tabs.splice(idx, 1);
   if (state.activeTab === id) {
     state.activeTab = null;
-    let next = state.tabs[Math.min(idx, state.tabs.length - 1)];
-    if (!next) {
-      next = { id: ++tabSeq, snap: emptySnapshot(), saved: null, dirty: false, console: [] };
-      state.tabs.push(next);
+    const next = state.tabs[Math.min(idx, state.tabs.length - 1)];
+    if (next) {
+      // 关到只剩空列表时不再自动开空白标签，切换到首页仪表盘
+      state.activeTab = next.id;
+      loadSnapshot(next.snap);
+      syncControlsFromState();
+      syncEditorTabForMethod();
+      livePreview();
     }
-    state.activeTab = next.id;
-    loadSnapshot(next.snap);
-    syncControlsFromState();
-    syncEditorTabForMethod();
-    livePreview();
   }
   renderTabs();
   renderSaved();
   renderConsole();
+  syncDashboard();
 }
 
 function markDirty() {
@@ -1239,6 +1241,10 @@ function consoleFinalize(code, statusText, post) {
     e.postLogs = post.logs || [];
     e.postError = post.ok ? null : post.error;
   }
+  // 会话执行统计：有 HTTP 响应时按状态码判定，否则按传输层退出码
+  state.sessionExec.total++;
+  const okHttp = e.httpResp && e.httpResp.status ? e.httpResp.status < 400 : code === 0;
+  if (okHttp) state.sessionExec.ok++;
   state.execEntry = null;
   renderConsole();
 }
@@ -1365,6 +1371,162 @@ function renderConsole() {
   }
   entries.forEach((e) => list.appendChild(consoleEntryEl(e)));
   list.scrollTop = list.scrollHeight;
+}
+
+/* ─────────── 首页仪表盘（所有请求标签关闭后显示） ─────────── */
+const dash = {
+  year: 0, month: 0,   // 日历当前显示月份（month 1-12；0=未初始化）
+  sel: null,           // 选中日期 {y, m, d}，默认今天
+  otdKey: "",          // 已加载的「历史上的今天」缓存键
+};
+
+function isDashboard() { return state.tabs.length === 0; }
+
+function syncDashboard() {
+  const el = $("dashboard");
+  if (!el) return;
+  const show = isDashboard();
+  el.classList.toggle("hidden", !show);
+  $("command-bar").classList.toggle("hidden", show);
+  $("workspace").classList.toggle("hidden", show);
+  if (show) renderDashboard();
+}
+
+function renderDashboard() {
+  const now = new Date();
+  if (!dash.year) { dash.year = now.getFullYear(); dash.month = now.getMonth() + 1; }
+  if (!dash.sel) dash.sel = { y: now.getFullYear(), m: now.getMonth() + 1, d: now.getDate() };
+  const h = now.getHours();
+  const greet = h < 6 ? "夜深了" : h < 11 ? "早上好" : h < 14 ? "中午好" : h < 18 ? "下午好" : "晚上好";
+  $("dash-greeting").textContent = `${greet}，星轨控制台`;
+  const week = "日一二三四五六"[now.getDay()];
+  $("dash-date").textContent = `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 ${now.getDate()} 日 · 星期${week}`;
+  renderDashStats();
+  renderCalendar();
+  renderAlmanac();
+  loadOnThisDay();
+}
+
+function renderDashStats() {
+  const reqs = (state.saved.groups || []).reduce((n, g) => n + (g.requests || []).length, 0);
+  const groups = (state.saved.groups || []).length;
+  const envs = state.envs.length;
+  const targets = ((state.ssh && state.ssh.targets) || state.sshTargets || []).length;
+  const t = state.sessionExec.total;
+  const rate = t ? Math.round(state.sessionExec.ok / t * 100) + "%" : "—";
+  const cards = [
+    ["快捷请求", reqs, "个已保存请求"],
+    ["分组", groups, "个请求分组"],
+    ["环境", envs, "套环境配置"],
+    ["SSH 目标机", targets, "台远程主机"],
+    ["本次执行", t, `成功率 ${rate}`],
+  ];
+  $("dash-stats").innerHTML = cards.map(([label, num, sub]) =>
+    `<div class="stat-card"><div class="stat-num">${num}</div>` +
+    `<div class="stat-label">${label}</div><div class="stat-sub">${escapeHtml(sub)}</div></div>`).join("");
+}
+
+/* 农历 / 黄历（lunar.js 内嵌，离线可用） */
+function lunarOf(y, m, d) {
+  try {
+    if (typeof Lunar === "undefined") return null;
+    return Lunar.fromDate(new Date(y, m - 1, d));
+  } catch (e) { return null; }
+}
+
+function calLunarLabel(lunar) {
+  if (!lunar) return { text: "", cls: "" };
+  const f = lunar.getFestivals();
+  if (f && f.length) return { text: f[0], cls: "cal-fest" };
+  const jq = lunar.getJieQi();
+  if (jq) return { text: jq, cls: "cal-jq" };
+  if (lunar.getDay() === 1) return { text: lunar.getMonthInChinese() + "月", cls: "cal-month" };
+  return { text: lunar.getDayInChinese(), cls: "" };
+}
+
+function renderCalendar() {
+  const now = new Date();
+  const ty = now.getFullYear(), tm = now.getMonth() + 1, td = now.getDate();
+  $("cal-title").textContent = `${dash.year} 年 ${dash.month} 月`;
+  const grid = $("cal-grid");
+  grid.innerHTML = "";
+  const days = new Date(dash.year, dash.month, 0).getDate();
+  const lead = (new Date(dash.year, dash.month - 1, 1).getDay() + 6) % 7; // 周一为一周之首
+  const prevDays = new Date(dash.year, dash.month - 1, 0).getDate();
+  const cells = [];
+  for (let i = lead - 1; i >= 0; i--) {
+    cells.push({ y: dash.month === 1 ? dash.year - 1 : dash.year,
+                 m: dash.month === 1 ? 12 : dash.month - 1, d: prevDays - i, out: true });
+  }
+  for (let d = 1; d <= days; d++) cells.push({ y: dash.year, m: dash.month, d, out: false });
+  let nd = 1;
+  while (cells.length % 7 !== 0) {
+    cells.push({ y: dash.month === 12 ? dash.year + 1 : dash.year,
+                 m: dash.month === 12 ? 1 : dash.month + 1, d: nd++, out: true });
+  }
+  cells.forEach((c) => {
+    const cell = document.createElement("div");
+    const isToday = c.y === ty && c.m === tm && c.d === td;
+    const isSel = dash.sel && c.y === dash.sel.y && c.m === dash.sel.m && c.d === dash.sel.d;
+    cell.className = "cal-cell" + (c.out ? " cal-out" : "") + (isToday ? " cal-today" : "") + (isSel ? " cal-sel" : "");
+    const lb = calLunarLabel(lunarOf(c.y, c.m, c.d));
+    cell.innerHTML = `<span class="cal-d">${c.d}</span><span class="cal-l ${lb.cls}">${escapeHtml(lb.text)}</span>`;
+    cell.addEventListener("click", () => {
+      dash.sel = { y: c.y, m: c.m, d: c.d };
+      if (c.out) { dash.year = c.y; dash.month = c.m; }
+      renderCalendar();
+      renderAlmanac();
+      loadOnThisDay();
+    });
+    grid.appendChild(cell);
+  });
+}
+
+function renderAlmanac() {
+  const box = $("almanac");
+  const s = dash.sel;
+  const pad = (n) => String(n).padStart(2, "0");
+  $("alm-date").textContent = `${s.y}-${pad(s.m)}-${pad(s.d)}`;
+  const lunar = lunarOf(s.y, s.m, s.d);
+  if (!lunar) { box.innerHTML = '<div class="dash-loading">黄历组件未加载</div>'; return; }
+  const yi = (lunar.getDayYi() || []).join("　") || "—";
+  const ji = (lunar.getDayJi() || []).join("　") || "—";
+  const rows = [
+    ["农历", `${lunar.getYearInChinese()}年 ${lunar.getMonthInChinese()}月${lunar.getDayInChinese()}`],
+    ["干支", `${lunar.getYearInGanZhi()}年 ${lunar.getMonthInGanZhi()}月 ${lunar.getDayInGanZhi()}日`],
+    ["生肖", lunar.getYearShengXiao()],
+    ["值神", `${lunar.getDayTianShen()}（${lunar.getDayTianShenType()}日 · ${lunar.getDayTianShenLuck()}）`],
+    ["冲煞", `冲${lunar.getChongShengXiao()} ${lunar.getChongDesc()} · 煞${lunar.getSha()}`],
+    ["喜神 / 财神", `${lunar.getDayPositionXiDesc()} / ${lunar.getDayPositionCaiDesc()}`],
+    ["彭祖百忌", `${lunar.getPengZuGan()} ${lunar.getPengZuZhi()}`],
+  ];
+  box.innerHTML =
+    `<div class="alm-lunar">${lunar.getMonthInChinese()}月${lunar.getDayInChinese()}</div>` +
+    `<div class="alm-row alm-yi"><span class="alm-k">宜</span><span class="alm-v">${escapeHtml(yi)}</span></div>` +
+    `<div class="alm-row alm-ji"><span class="alm-k">忌</span><span class="alm-v">${escapeHtml(ji)}</span></div>` +
+    rows.map(([k, v]) => `<div class="alm-row"><span class="alm-k">${k}</span><span class="alm-v">${escapeHtml(v)}</span></div>`).join("");
+}
+
+/* 历史上的今天（后端代理中文维基百科；失败/无数据时隐藏区块） */
+async function loadOnThisDay() {
+  const s = dash.sel;
+  if (!s) return;
+  const key = `${s.m}-${s.d}`;
+  if (dash.otdKey === key) return;
+  dash.otdKey = key;
+  const card = $("onthisday-card");
+  const box = $("onthisday");
+  card.classList.remove("hidden");
+  box.innerHTML = '<div class="dash-loading">加载中…</div>';
+  const j = await apiGet(`/api/onthisday?month=${s.m}&day=${s.d}`);
+  if (dash.otdKey !== key) return; // 期间已切换日期
+  if (!j || j.error || !(j.events || []).length) {
+    card.classList.add("hidden");
+    return;
+  }
+  box.innerHTML = j.events.map((e) =>
+    `<div class="otd-item"><span class="otd-year">${escapeHtml(String(e.year || ""))}</span>` +
+    `<span class="otd-text">${escapeHtml(e.text)}</span></div>`).join("");
 }
 
 /* ─────────── 前后置脚本（Postman 风格 pm API） ─────────── */
@@ -2069,6 +2231,23 @@ function bindEvents() {
 
   // 侧边栏
   $("saved-new").addEventListener("click", () => { newTab(); toast("已新建空白请求"); });
+
+  // 仪表盘
+  $("dash-new").addEventListener("click", () => { newTab(); toast("已新建空白请求"); });
+  $("cal-prev").addEventListener("click", () => {
+    dash.month--; if (dash.month < 1) { dash.month = 12; dash.year--; }
+    renderCalendar();
+  });
+  $("cal-next").addEventListener("click", () => {
+    dash.month++; if (dash.month > 12) { dash.month = 1; dash.year++; }
+    renderCalendar();
+  });
+  $("cal-today").addEventListener("click", () => {
+    const n = new Date();
+    dash.year = n.getFullYear(); dash.month = n.getMonth() + 1;
+    dash.sel = { y: dash.year, m: dash.month, d: n.getDate() };
+    renderCalendar(); renderAlmanac(); loadOnThisDay();
+  });
   $("saved-import").addEventListener("click", () => $("import-file").click());
   $("import-file").addEventListener("change", (e) => {
     const f = e.target.files[0];

@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import threading
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl
@@ -101,6 +102,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 self._send_json(load_ssh_targets())
             elif path == "/api/history":
                 self._send_json(self.app.history)
+            elif path == "/api/onthisday":
+                self._on_this_day()
             elif path == "/api/events":
                 query = self.path.split("?", 1)[1] if "?" in self.path else ""
                 since = 0
@@ -177,6 +180,35 @@ class _ApiHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, 500)
 
     # ── 业务 ──
+    def _on_this_day(self):
+        """历史上的今天：代理中文维基百科 onthisday（避免前端跨域，离线时前端隐藏区块）"""
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        try:
+            month = int(params.get("month", ""))
+            day = int(params.get("day", ""))
+            if not (1 <= month <= 12 and 1 <= day <= 31):
+                raise ValueError
+        except ValueError:
+            self._send_json({"error": "invalid month/day"}, 400)
+            return
+        url = (f"https://api.wikimedia.org/feed/v1/wikipedia/zh/"
+               f"onthisday/all/{month:02d}/{day:02d}")
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "curlgen-dashboard/2.0 (local tool)"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            events = [
+                {"year": e.get("year"), "text": e.get("text", "")}
+                for e in data.get("selected", []) + data.get("events", [])
+                if e.get("text")
+            ][:12]
+            self._send_json({"events": events})
+        except Exception as e:
+            logger.info("onthisday 获取失败: %s", e)
+            self._send_json({"error": str(e)})
+
     def _generate(self, data):
         try:
             curl, sign_preview = build_curl(data)
@@ -303,7 +335,10 @@ class WebCurlGenerator(QMainWindow):
             css = f.read()
         with open(os.path.join(WEB_DIR, "app.js"), "r", encoding="utf-8") as f:
             js = f.read()
+        with open(os.path.join(WEB_DIR, "vendor", "lunar.js"), "r", encoding="utf-8") as f:
+            lunar_js = f.read()
         html = html.replace('<link rel="stylesheet" href="app.css">', f"<style>\n{css}\n</style>")
+        html = html.replace('<script src="vendor/lunar.js"></script>', f"<script>\n{lunar_js}\n</script>")
         html = html.replace('<script src="app.js"></script>', f"<script>\n{js}\n</script>")
         html = html.replace("__PORT__", str(self.port))
         self.view.page().setHtml(html, QUrl.fromLocalFile(WEB_DIR.replace("\\", "/") + "/"))

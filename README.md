@@ -116,6 +116,7 @@
 - **URL 地址栏高亮**：`{{变量}}` 与 query 参数键值染色，悬浮显示解析后的真实取值
 - **Console 面板**（Postman 风格）：底部独立页签，每个请求标签各有一份记录；一次执行一条可折叠条目，展开可见 概览（状态行 / 耗时 / 体积）/ Request Headers·Body（实际发送报文）/ Response Headers·Body / cURL 等效命令 / 脚本日志，状态徽章按 2xx·3xx·4xx/5xx 着色；关闭标签或退出软件即清空
 - 响应区：HTTP 状态行 / 耗时 / 体积元信息，JSON Pretty / Raw 切换，一键复制
+- **首页仪表盘**：关闭全部请求标签后自动呈现——统计卡片（快捷请求 / 分组 / 环境 / SSH 目标机 / 本次执行·成功率）、当月日历（农历、节日、节气，周一为首，今天高亮）、**黄历详情**（宜 / 忌 / 干支 / 生肖 / 值神 / 冲煞 / 喜神财神方位 / 彭祖百忌，内嵌 lunar.js 完全离线）、**历史上的今天**（后端代理中文维基百科，离线时自动隐藏）；「＋」或「新建请求」随时回到工作台
 - 侧栏页签式（快捷请求 / 历史记录切换）+ 搜索 + 请求项右键（新标签打开 / 重命名 / 删除）+ 分组计数徽章；设置类入口收纳为底部图标行
 - **一键导入** Postman Collection v2.1 / 环境变量 / OpenAPI 3（Apifox 可导出）：分组、鉴权、前后置脚本全映射，同名自动合并；环境变量导入为「自定义参数」，`{{变量名}}` 引用即刻生效
 - KV 行启用勾选：禁用的 Header / Param 不进生成的命令
@@ -263,7 +264,8 @@ buildCurl/
     ├── signing.py             # 🔐 签名入口（MD5 / SHA256）
     ├── sign_utils.py          # 🔐 Java 风格排序 / SHA256 实现
     ├── curl_builder.py        # 🏗 cURL 命令构建（新旧 UI 共用）
-    ├── ssh_executor.py        # 🖧 本地执行 + GateShell 堡垒机执行
+    ├── http_executor.py       # ⚡ 本地直发 HTTP（urllib，自动跟随重定向）
+    ├── ssh_executor.py        # 🖧 GateShell 堡垒机远程执行
     ├── widgets.py             # 🧱 通用组件（语法高亮 / 下拉 / 键值编辑器）
     ├── saved_panel.py         # ⭐ 快捷请求面板
     ├── dialogs.py             # 🪟 对话框（环境 / SSH / 保存请求）
@@ -272,8 +274,10 @@ buildCurl/
     └── web/                   # 🌐 前端资源（运行时内联进 HTML）
         ├── index.html         # 结构骨架
         ├── app.css            # 样式（深/浅双主题令牌）
-        ├── app.js             # 交互逻辑（高亮 / 悬浮 / 事件流）
-        └── logo.png
+        ├── app.js             # 交互逻辑（高亮 / 悬浮 / 事件流 / 仪表盘）
+        ├── logo.png
+        └── vendor/
+            └── lunar.js       # 农历黄历库（lunar-javascript, MIT，离线内嵌）
 ```
 
 ---
@@ -379,6 +383,7 @@ sorted(key1=value1&key2=value2&...) + "key={secret}"
 | `GET` | `/api/ssh_targets` | 目标机列表 |
 | `GET` | `/api/history` | 生成历史 |
 | `GET` | `/api/events?since=N` | 事件流增量（执行输出 / 通知 / 测试结果） |
+| `GET` | `/api/onthisday?month=M&day=D` | 历史上的今天（代理中文维基百科，离线返回 error） |
 | `POST` | `/api/generate` | 生成 cURL 命令并返回签名预览 |
 | `POST` | `/api/execute` | 执行请求（`mode=local` / `ssh`） |
 | `POST` | `/api/stop` | 停止当前执行 |
