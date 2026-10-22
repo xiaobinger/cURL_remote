@@ -176,7 +176,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
         except ValueError as e:
             self._send_json({"error": str(e)})
             return
-        self.app.push_history(data, curl)
+        if not data.get("preview"):
+            self.app.push_history(data, curl)
         self._send_json({"curl": curl, "sign_preview": sign_preview})
 
     def _save_request(self, payload):
@@ -243,6 +244,7 @@ class _ApiHandler(BaseHTTPRequestHandler):
         except ValueError as e:
             self._send_json({"error": str(e)})
             return
+        self.app.push_history(data, curl)
         self.app.start_exec(data, curl, mode)
         self._send_json({"ok": True})
 

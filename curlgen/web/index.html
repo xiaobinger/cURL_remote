@@ -74,10 +74,9 @@
       </div>
     </div>
     <div class="cmd-row actions">
-      <button class="btn btn-primary" id="btn-generate">⚡ 生成 cURL</button>
       <button class="btn btn-ghost" id="btn-copy">复制</button>
       <button class="btn btn-ghost" id="btn-save">保存请求</button>
-      <button class="btn btn-exec" id="btn-exec">▶ 执行</button>
+      <button class="btn btn-exec" id="btn-exec">▶ 执行（本地）</button>
       <button class="btn btn-danger" id="btn-stop" disabled>■ 停止</button>
       <span class="status-pill" id="status-pill">就绪</span>
     </div>
@@ -184,7 +183,8 @@
         <div class="ppage-tools">
           <button class="btn btn-mini" id="btn-copy2">复制</button>
         </div>
-        <pre id="curl-preview" class="code-block"><span class="placeholder">点击「生成 cURL」或按 Ctrl+Enter</span></pre>
+        <pre id="curl-preview" class="code-block"><span class="placeholder">输入 URL 后实时生成 cURL</span></pre>
+        <button class="ssh-fab" id="btn-ssh-exec" title="通过 SSH 跳板机远程执行（需二次确认）">🖧 SSH 请求</button>
       </div>
     </section>
   </div>
@@ -231,17 +231,6 @@
   </div>
 
   <!-- 执行确认 -->
-  <div class="modal" id="modal-exec">    <div class="modal-title">选择执行模式</div>
-    <label class="radio-card"><input type="radio" name="execmode" value="local" checked>
-      <span><b>本地执行</b><i>在本机直接运行 curl 命令</i></span></label>
-    <label class="radio-card"><input type="radio" name="execmode" value="ssh">
-      <span><b>SSH 远程执行</b><i>经跳板机 → 目标机执行</i></span></label>
-    <div class="modal-btns">
-      <button class="btn btn-ghost" data-close>取消</button>
-      <button class="btn btn-exec" id="exec-ok">确认执行</button>
-    </div>
-  </div>
-
   <!-- 环境管理 -->
   <div class="modal wide" id="modal-env">
     <div class="modal-title">环境配置管理 <span class="modal-sub">点击单元格直接编辑 · 签名密钥仅存本地 ~/.cURL</span></div>

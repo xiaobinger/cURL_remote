@@ -302,6 +302,7 @@ function newTab(snap, saved) {
   loadSnapshot(t.snap);
   syncControlsFromState();
   syncEditorTabForMethod();
+  livePreview();
   renderTabs();
   renderSaved();
   return t;
@@ -315,6 +316,7 @@ function activateTab(id) {
   loadSnapshot(t.snap);
   syncControlsFromState();
   syncEditorTabForMethod();
+  livePreview();
   renderTabs();
   renderSaved();
 }
@@ -339,12 +341,14 @@ async function closeTab(id) {
     loadSnapshot(next.snap);
     syncControlsFromState();
     syncEditorTabForMethod();
+    livePreview();
   }
   renderTabs();
   renderSaved();
 }
 
 function markDirty() {
+  livePreview();
   const t = activeTabRef();
   if (!t) return;
   if (!t.dirty) {
@@ -466,7 +470,7 @@ function syncControlsFromState() {
   // cURL 预览
   $("curl-preview").innerHTML = state.curl
     ? highlightCurl(state.curl)
-    : '<span class="placeholder">点击「生成 cURL」或按 Ctrl+Enter</span>';
+    : '<span class="placeholder">输入 URL 后实时生成 cURL</span>';
 }
 
 /* ─────────── KV 编辑器（含启用勾选） ─────────── */
@@ -1121,13 +1125,35 @@ function runScript(kind) {
   }
 }
 
+/* ─────────── 实时 cURL 预览 ─────────── */
+let previewTimer = null;
+function livePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(refreshPreview, 350);
+}
+async function refreshPreview() {
+  const data = collectForm();
+  if (!data.url) {
+    state.curl = "";
+    $("curl-preview").innerHTML = '<span class="placeholder">输入 URL 后实时生成 cURL</span>';
+    $("sign-preview").textContent = "";
+    return;
+  }
+  data.preview = true;
+  const j = await api("/api/generate", data);
+  if (j.error) return; // 编辑中静默，不打扰
+  state.curl = j.curl;
+  $("curl-preview").innerHTML = highlightCurl(j.curl);
+  $("sign-preview").textContent = j.sign_preview || "";
+}
+
 /* ─────────── 核心动作 ─────────── */
-async function doGenerate() {
+async function prepareExec() {
   const pre = runScript("pre");
   if (!pre.ok) {
     toast(`前置脚本错误: ${pre.error}`, "err");
     setStatus("前置脚本错误", "err");
-    return;
+    return false;
   }
   if (pre.ran) {
     syncControlsFromState();
@@ -1137,20 +1163,63 @@ async function doGenerate() {
   if (!data.url) {
     toast("请输入 URL", "err");
     setStatus("请输入 URL", "err");
-    return;
+    return false;
   }
+  data.preview = true;
   const j = await api("/api/generate", data);
   if (j.error) {
     toast(j.error, "err");
     setStatus(j.error, "err");
-    return;
+    return false;
   }
   state.curl = j.curl;
   $("curl-preview").innerHTML = highlightCurl(j.curl);
   $("sign-preview").textContent = j.sign_preview || "";
-  showPpage("preview");
-  setStatus("已生成 ✓", "ok");
-  refreshHistory();
+  return true;
+}
+
+async function doExec() {
+  if (state.executing) { toast("正在执行中…", "busy"); return; }
+  if (!(await prepareExec())) return;
+  await startExec("local");
+}
+
+async function doSshExec() {
+  if (state.executing) { toast("正在执行中…", "busy"); return; }
+  if (!collectForm().url) { toast("请先输入 URL", "err"); return; }
+  const env = state.envs.find((x) => x.alias === state.env);
+  const target = (env && env.use_ssh && env.ssh_target) || "默认目标机";
+  const ok = await askConfirm(`将通过 SSH 跳板机远程执行该请求（目标：${target}），确认发起？`);
+  if (!ok) return;
+  if (!(await prepareExec())) return;
+  await startExec("ssh");
+}
+
+async function startExec(mode) {
+  const data = collectForm();
+  state.executing = true;
+  state.respStartTs = Date.now();
+  $("btn-exec").disabled = true;
+  $("btn-ssh-exec").disabled = true;
+  $("btn-stop").disabled = false;
+  respClear();
+  showPpage("response");
+  $("response-view").classList.add("streaming");
+  respSetStatus("执行中...", "busy");
+  setStatus("执行中...", "busy");
+  $("conn-badge").textContent = `● ${mode === "ssh" ? "SSH 远程" : "本地"}执行中`;
+  const j = await api("/api/execute", { data, mode });
+  if (j.error) {
+    state.executing = false;
+    $("btn-exec").disabled = false;
+    $("btn-ssh-exec").disabled = false;
+    $("btn-stop").disabled = true;
+    respAppend(`[错误] ${j.error}`);
+    respSetStatus("配置不完整", "err");
+    setStatus("执行失败", "err");
+    updateConnBadge();
+    toast(j.error, "err");
+  }
 }
 
 async function doCopy() {
@@ -1199,45 +1268,6 @@ async function doSaveConfirm() {
   renderTabs();
   closeModal();
   toast(`已保存: ${name}`, "ok");
-}
-
-async function doExec() {
-  const data = collectForm();
-  if (!data.url) { toast("请先输入 URL", "err"); return; }
-  if (!state.curl) await doGenerate();
-  // 当前环境启用 SSH 时默认选中远程执行
-  const env = state.envs.find((x) => x.alias === state.env);
-  const useSsh = !!(env && env.use_ssh);
-  document.querySelector('input[name="execmode"][value="ssh"]').checked = useSsh;
-  document.querySelector('input[name="execmode"][value="local"]').checked = !useSsh;
-  openModal("modal-exec");
-}
-
-async function doExecConfirm() {
-  const mode = document.querySelector('input[name="execmode"]:checked').value;
-  closeModal();
-  const data = collectForm();
-  state.executing = true;
-  state.respStartTs = Date.now();
-  $("btn-exec").disabled = true;
-  $("btn-stop").disabled = false;
-  respClear();
-  showPpage("response");
-  $("response-view").classList.add("streaming");
-  respSetStatus("执行中...", "busy");
-  setStatus("执行中...", "busy");
-  $("conn-badge").textContent = `● ${mode === "ssh" ? "SSH 远程" : "本地"}执行中`;
-  const j = await api("/api/execute", { data, mode });
-  if (j.error) {
-    state.executing = false;
-    $("btn-exec").disabled = false;
-    $("btn-stop").disabled = true;
-    respAppend(`[错误] ${j.error}`);
-    respSetStatus("配置不完整", "err");
-    setStatus("执行失败", "err");
-    updateConnBadge();
-    toast(j.error, "err");
-  }
 }
 
 async function doStop() {
@@ -1569,8 +1599,10 @@ async function pollEvents() {
     } else if (ev.type === "finished") {
       state.executing = false;
       $("btn-exec").disabled = false;
+      $("btn-ssh-exec").disabled = false;
       $("btn-stop").disabled = true;
       updateConnBadge();
+      refreshHistory();
       const code = ev.code;
       let txt, kind;
       if (code === 0) { txt = "成功 (exit 0)"; kind = "ok"; }
@@ -1603,14 +1635,13 @@ async function pollEvents() {
 
 /* ─────────── 事件绑定 ─────────── */
 function bindEvents() {
-  $("btn-generate").addEventListener("click", doGenerate);
   $("btn-copy").addEventListener("click", doCopy);
   $("btn-copy2").addEventListener("click", doCopy);
   $("btn-save").addEventListener("click", doSave);
   $("btn-exec").addEventListener("click", doExec);
+  $("btn-ssh-exec").addEventListener("click", doSshExec);
   $("btn-stop").addEventListener("click", doStop);
   $("save-ok").addEventListener("click", doSaveConfirm);
-  $("exec-ok").addEventListener("click", doExecConfirm);
   $("btn-resp-copy").addEventListener("click", async () => {
     const text = $("response-view").textContent;
     if (!text) { toast("没有可复制的响应", "err"); return; }
@@ -1797,7 +1828,7 @@ function bindEvents() {
 
   // 快捷键
   document.addEventListener("keydown", (e) => {
-    if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); doGenerate(); }
+    if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); refreshPreview(); showPpage("preview"); }
     if (e.ctrlKey && e.shiftKey && e.key === "Enter") { e.preventDefault(); doExec(); }
     if (e.ctrlKey && (e.key === "t" || e.key === "T")) { e.preventDefault(); newTab(); }
     if (e.key === "Escape") { settleModals(); closeModal(); }
@@ -1865,6 +1896,7 @@ async function init() {
     updateConnBadge();
     renderSaved();
     refreshHistory();
+    refreshPreview();
     toast("星轨控制台已就绪 ⚡", "ok");
 }
 

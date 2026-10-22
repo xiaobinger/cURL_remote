@@ -848,9 +848,29 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 .pane-tools { margin-left: auto; display: flex; gap: 6px; padding-bottom: 6px; }
 .pane-tabs .resp-status { margin-left: 10px; padding-bottom: 6px; }
 
-.ppage { display: none; flex: 1; flex-direction: column; min-height: 0; }
+.ppage { display: none; flex: 1; flex-direction: column; min-height: 0; position: relative; }
 .ppage.active { display: flex; animation: fade .2s var(--ease); }
 .ppage-tools { display: flex; justify-content: flex-end; padding: 8px 14px 0; }
+.ssh-fab {
+  position: absolute; right: 26px; bottom: 26px;
+  padding: 7px 16px;
+  border: 1px solid var(--peach);
+  border-radius: 999px;
+  background: var(--bg-panel-solid);
+  color: var(--peach);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+  opacity: .85;
+  transition: all .18s var(--ease);
+  box-shadow: 0 4px 14px var(--chip-shadow);
+}
+.ssh-fab:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--peach);
+  color: #fff;
+  transform: translateY(-1px);
+}
+.ssh-fab:disabled { opacity: .4; cursor: not-allowed; }
 
 .code-block {
   flex: 1; min-height: 0;
