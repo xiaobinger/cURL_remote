@@ -1875,6 +1875,87 @@ function closeModal() {
   $("modal-mask").classList.remove("open");
 }
 
+/* ─────────── JSON 工具（响应框 / Console 选中 JSON 右键唤起） ─────────── */
+function jsonValidate() {
+  const t = $("json-editor").value.trim();
+  const st = $("json-status");
+  if (!t) { st.textContent = ""; st.className = "json-status"; return null; }
+  try {
+    const obj = JSON.parse(t);
+    st.textContent = `✓ 合法 JSON（${Array.isArray(obj) ? "数组" : typeof obj === "object" && obj ? "对象" : "标量"}）`;
+    st.className = "json-status ok";
+    return obj;
+  } catch (e) {
+    st.textContent = "✗ " + e.message;
+    st.className = "json-status err";
+    return undefined;
+  }
+}
+
+function openJsonTool(text) {
+  $("json-editor").value = text || "";
+  jsonValidate();
+  openModal("modal-json");
+}
+
+/* 去转义：把 {\"a\":1} 还原为 {"a":1}；容错处理真实换行/制表符 */
+function jsonUnescape(text) {
+  const safe = text.replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
+  return JSON.parse('"' + safe + '"');
+}
+
+function bindJsonTool() {
+  const ed = $("json-editor");
+  ed.addEventListener("input", jsonValidate);
+
+  $("json-fmt").addEventListener("click", () => {
+    const obj = jsonValidate();
+    if (obj == null) return;
+    ed.value = JSON.stringify(obj, null, 2);
+    jsonValidate();
+  });
+  $("json-min").addEventListener("click", () => {
+    const obj = jsonValidate();
+    if (obj == null) return;
+    ed.value = JSON.stringify(obj);
+    jsonValidate();
+  });
+  $("json-esc").addEventListener("click", () => {
+    if (!ed.value) return;
+    ed.value = JSON.stringify(ed.value).slice(1, -1); // bejson 风格：不带外层引号
+    jsonValidate();
+  });
+  $("json-unesc").addEventListener("click", () => {
+    if (!ed.value) return;
+    try {
+      ed.value = jsonUnescape(ed.value);
+      jsonValidate();
+    } catch (e) {
+      const st = $("json-status");
+      st.textContent = "✗ 无法去转义：" + e.message;
+      st.className = "json-status err";
+    }
+  });
+  $("json-copy").addEventListener("click", async () => {
+    if (!ed.value) { toast("没有可复制的内容", "err"); return; }
+    await api("/api/copy", { text: ed.value });
+    toast("已复制到剪贴板 ✓", "ok");
+  });
+
+  // 响应框 / Console 详情块：选中文本后右键唤起
+  const jsonCtx = (e) => {
+    const sel = String(window.getSelection() || "");
+    if (!sel.trim()) return; // 无选中，放行默认行为
+    e.preventDefault();
+    e.stopPropagation(); // 阻止冒泡到 document 级 contextmenu（会把刚弹出的菜单关掉）
+    showCtxMenu(e.clientX, e.clientY, [["{ } JSON 工具", () => openJsonTool(sel)]]);
+  };
+  $("response-view").addEventListener("contextmenu", jsonCtx);
+  $("console-list").addEventListener("contextmenu", (e) => {
+    if (e.target.closest(".ce-sec")) jsonCtx(e);
+  });
+}
+
 /* ─────────── 环境管理 ─────────── */
 async function openEnvModal() {
   state.envs = await apiGet("/api/envs");
@@ -2239,6 +2320,7 @@ function bindEvents() {
 
   // 代码预览语言列表（左侧纵向，仅 cURL 显示 SSH 请求按钮）
   renderCodegenSide();
+  bindJsonTool();
   // 语言列表折叠 / 展开（按钮收在语言栏头部，折叠后留细轨道）
   $("cg-collapse").addEventListener("click", () => {
     const wrap = $("codegen-wrap");

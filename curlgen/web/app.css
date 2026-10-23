@@ -1489,3 +1489,19 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 .tok-num  { color: var(--yellow); }
 .tok-type { color: var(--teal); }
 .tok-fn   { color: var(--peach); }
+
+/* ═══════════ JSON 工具弹框（响应框 / Console 右键唤起） ═══════════ */
+.modal-json { width: 820px; }
+.json-toolbar { display: flex; align-items: center; gap: 8px; }
+.json-status { margin-left: auto; font: 11px var(--font-ui); color: var(--text-3); }
+.json-status.ok  { color: var(--green); }
+.json-status.err { color: var(--red); }
+#json-editor {
+  width: 100%; height: 46vh; resize: vertical; box-sizing: border-box;
+  background: var(--bg-input); color: var(--text-1);
+  border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  font: 12px/1.6 var(--font-mono); padding: 10px 12px;
+  outline: none; white-space: pre; overflow: auto;
+  transition: border-color .15s var(--ease);
+}
+#json-editor:focus { border-color: var(--accent); }

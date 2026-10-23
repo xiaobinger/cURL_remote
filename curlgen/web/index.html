@@ -381,6 +381,23 @@
       <button class="btn btn-apply" id="ai-gen-apply" hidden>✓ 应用</button>
     </div>
   </div>
+
+  <!-- JSON 工具（响应框 / Console 选中 JSON 右键唤起） -->
+  <div class="modal wide modal-json" id="modal-json">
+    <div class="modal-title">{ } JSON 工具 <span class="modal-sub">编辑时实时校验 · 转义为 bejson 风格（不带外层引号）</span></div>
+    <div class="json-toolbar">
+      <button class="btn btn-mini" id="json-fmt">格式化</button>
+      <button class="btn btn-mini" id="json-min">压缩</button>
+      <button class="btn btn-mini" id="json-esc">转义</button>
+      <button class="btn btn-mini" id="json-unesc">去转义</button>
+      <span class="json-status" id="json-status"></span>
+    </div>
+    <textarea id="json-editor" spellcheck="false" placeholder="粘贴或编辑 JSON 文本…"></textarea>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" data-close>关闭</button>
+      <button class="btn btn-primary" id="json-copy">复制</button>
+    </div>
+  </div>
 </div>
 
 <div id="toast-root"></div>
