@@ -1413,3 +1413,37 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
   #onthisday-card { grid-column: auto; }
   .dash-calendar-card { grid-row: auto; }
 }
+
+/* ═══════════ 代码预览：左侧语言列表 + 语法高亮 ═══════════ */
+.codegen-wrap { flex: 1; min-height: 0; display: flex; }
+.codegen-side {
+  width: 128px; flex: none; overflow-y: auto;
+  border-right: 1px solid var(--border-soft);
+  padding: 8px 8px 14px;
+}
+.cg-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px; border-radius: var(--r-sm);
+  cursor: pointer; color: var(--text-2);
+  font: 12px var(--font-ui);
+  transition: all .15s var(--ease);
+  user-select: none;
+}
+.cg-item:hover { background: var(--bg-hover); color: var(--text-1); }
+.cg-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.cg-badge {
+  flex: none; width: 24px; height: 18px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font: 700 9px var(--font-mono);
+  background: var(--bg-input); color: var(--text-3);
+  border: 1px solid var(--border-soft);
+}
+.cg-item.active .cg-badge { color: var(--accent); border-color: var(--accent); background: var(--bg-panel-solid); }
+.codegen-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+
+/* 语法高亮 token（沿用 curl 配色体系） */
+.tok-kw   { color: var(--mauve); font-weight: 600; }
+.tok-com  { color: var(--text-3); font-style: italic; }
+.tok-num  { color: var(--yellow); }
+.tok-type { color: var(--teal); }
+.tok-fn   { color: var(--peach); }

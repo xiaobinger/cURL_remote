@@ -184,23 +184,16 @@
         <pre id="response-view" class="code-block resp"><span class="placeholder">执行后响应内容将展示在这里...</span></pre>
       </div>
       <div class="ppage" data-ppage="preview">
-        <div class="ppage-tools">
-          <select id="code-lang" class="mini-select" title="代码语言">
-            <option value="curl">cURL</option>
-            <option value="python">Python</option>
-            <option value="javascript">JavaScript</option>
-            <option value="typescript">TypeScript</option>
-            <option value="node">Node.js</option>
-            <option value="java">Java</option>
-            <option value="csharp">C#</option>
-            <option value="go">Go</option>
-            <option value="php">PHP</option>
-            <option value="rust">Rust</option>
-          </select>
-          <button class="btn btn-mini" id="btn-copy2">复制</button>
+        <div class="codegen-wrap">
+          <div class="codegen-side" id="codegen-side"></div>
+          <div class="codegen-main">
+            <div class="ppage-tools">
+              <button class="btn btn-mini" id="btn-copy2">复制</button>
+            </div>
+            <pre id="curl-preview" class="code-block"><span class="placeholder">输入 URL 后实时生成代码</span></pre>
+            <button class="ssh-fab" id="btn-ssh-exec" title="通过 SSH 跳板机远程执行（需二次确认）">🖧 SSH 请求</button>
+          </div>
         </div>
-        <pre id="curl-preview" class="code-block"><span class="placeholder">输入 URL 后实时生成 cURL</span></pre>
-        <button class="ssh-fab" id="btn-ssh-exec" title="通过 SSH 跳板机远程执行（需二次确认）">🖧 SSH 请求</button>
       </div>
       <div class="ppage" data-ppage="console">
         <div id="console-list"></div>

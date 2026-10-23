@@ -152,6 +152,90 @@ function highlightCurl(cmd) {
   return out;
 }
 
+/* ─────────── 多语言语法高亮（轻量 tokenizer，与主题令牌一致） ─────────── */
+const HL_STR = `"(?:\\\\.|[^"\\\\\\n])*"|'(?:\\\\.|[^'\\\\\\n])*'|\`(?:\\\\.|[^\`\\\\])*\``;
+const HL_CFG = {
+  python:     { lc: "#", kw: "import|from|as|def|return|if|else|elif|for|while|in|not|and|or|with|try|except|finally|class|lambda|pass|None|True|False|print" },
+  javascript: { lc: "\\/\\/", bc: true, kw: "const|let|var|function|return|await|async|new|if|else|for|of|in|typeof|true|false|null|undefined|require|module|exports" },
+  typescript: { lc: "\\/\\/", bc: true, kw: "const|let|var|function|return|await|async|new|if|else|for|of|in|typeof|type|interface|extends|implements|readonly|true|false|null|undefined|Record|string|number|boolean" },
+  node:       { lc: "\\/\\/", bc: true, kw: "const|let|var|function|return|await|async|new|if|else|for|of|in|typeof|true|false|null|undefined|require|module|exports" },
+  java:       { lc: "\\/\\/", bc: true, kw: "import|package|public|private|protected|class|static|final|void|new|throws|return|if|else|for|while|int|long|boolean|try|catch", type: true },
+  csharp:     { lc: "\\/\\/", bc: true, kw: "using|namespace|var|new|await|async|return|class|static|void|int|string|bool|if|else|foreach|in|try|catch|true|false|null", type: true },
+  go:         { lc: "\\/\\/", bc: true, kw: "package|import|func|defer|if|else|for|range|return|nil|var|const|type|struct|go|chan|panic|true|false" },
+  php:        { lc: "\\/\\/|#", bc: true, kw: "echo|function|return|if|else|foreach|as|true|false|null|new|use", tag: true, varp: true },
+  rust:       { lc: "\\/\\/", bc: true, kw: "fn|let|mut|use|impl|match|return|if|else|in|pub|mod|struct|enum|where|for|while|loop|crate|self|Self|Ok|Err|Some|None|true|false", macro: true },
+};
+
+function highlightCode(code, lang) {
+  if (!code) return "";
+  if (lang === "curl") return highlightCurl(code);
+  const cfg = HL_CFG[lang];
+  if (!cfg) return escapeHtml(code);
+  const parts = [];
+  if (cfg.tag) parts.push(`(<\\?php)`);
+  if (cfg.bc) parts.push(`(\\/\\*[\\s\\S]*?\\*\\/)`);
+  if (cfg.lc) parts.push(`((?:${cfg.lc})[^\\n]*)`);
+  parts.push(`(${HL_STR})`);
+  if (cfg.macro) parts.push(`(\\b\\w+!)`);
+  parts.push(`(\\b(?:${cfg.kw})\\b)`);
+  if (cfg.type) parts.push(`(\\b[A-Z][A-Za-z0-9_]*\\b)`);
+  if (cfg.varp) parts.push(`(\\$\\w+)`);
+  parts.push(`(\\b[A-Za-z_]\\w*(?=\\())`);   // 函数调用
+  parts.push(`(\\b\\d+(?:\\.\\d+)?\\b)`);     // 数字
+  const re = new RegExp(parts.join("|"), "gm");
+  const kwRe = new RegExp(`^(?:${cfg.kw})$`);
+  let out = "", last = 0, m;
+  while ((m = re.exec(code))) {
+    out += escapeHtml(code.slice(last, m.index));
+    const tok = m[0];
+    let cls = "tok-num";
+    if (/^(\/\/|#|\/\*)/.test(tok) || /^<\?php/.test(tok)) cls = "tok-com";
+    else if (/^["'`]/.test(tok)) cls = "tok-str";
+    else if (cfg.macro && /^\w+!$/.test(tok)) cls = "tok-fn";
+    else if (kwRe.test(tok)) cls = "tok-kw";
+    else if (cfg.type && /^[A-Z]/.test(tok)) cls = "tok-type";
+    else if (cfg.varp && /^\$/.test(tok)) cls = "tok-fn";
+    else if (/^[A-Za-z_]/.test(tok)) cls = "tok-fn";
+    out += `<span class="${cls}">${escapeHtml(tok)}</span>`;
+    last = m.index + tok.length;
+  }
+  out += escapeHtml(code.slice(last));
+  return out;
+}
+
+/* ─────────── 代码预览：左侧语言列表 ─────────── */
+const CODE_LANGS = [
+  { id: "curl",       name: "cURL",       badge: ">_" },
+  { id: "python",     name: "Python",     badge: "Py" },
+  { id: "javascript", name: "JavaScript", badge: "JS" },
+  { id: "typescript", name: "TypeScript", badge: "TS" },
+  { id: "node",       name: "Node.js",    badge: "Nj" },
+  { id: "java",       name: "Java",       badge: "Jv" },
+  { id: "csharp",     name: "C#",         badge: "C#" },
+  { id: "go",         name: "Go",         badge: "Go" },
+  { id: "php",        name: "PHP",        badge: "php" },
+  { id: "rust",       name: "Rust",       badge: "Rs" },
+];
+
+function renderCodegenSide() {
+  const side = $("codegen-side");
+  if (!side) return;
+  side.innerHTML = "";
+  CODE_LANGS.forEach((l) => {
+    const el = document.createElement("div");
+    el.className = "cg-item" + (l.id === state.codeLang ? " active" : "");
+    el.innerHTML = `<span class="cg-badge">${escapeHtml(l.badge)}</span><span>${escapeHtml(l.name)}</span>`;
+    el.addEventListener("click", () => {
+      if (state.codeLang === l.id) return;
+      state.codeLang = l.id;
+      renderCodegenSide();
+      updateConnBadge();
+      refreshPreview();
+    });
+    side.appendChild(el);
+  });
+}
+
 /* ─────────── 环境变量引用 {{ref}} 高亮 ─────────── */
 function envVarMap() {
   const map = {};
@@ -564,8 +648,8 @@ function syncControlsFromState() {
   // 脚本
   $("pre-script").value = state.preScript || "";
   $("post-script").value = state.postScript || "";
-  // cURL 预览
-  $("curl-preview").innerHTML = state.curl
+  // 代码预览
+  $("curl-preview").innerHTML = (state.codeLang === "curl" && state.curl)
     ? highlightCurl(state.curl)
     : '<span class="placeholder">输入 URL 后实时生成代码</span>';
   updateConnBadge();
@@ -1614,7 +1698,7 @@ async function refreshPreview() {
     $("curl-preview").innerHTML = highlightCurl(j.curl);
     $("sign-preview").textContent = j.sign_preview || "";
   } else {
-    $("curl-preview").textContent = j.code || "";
+    $("curl-preview").innerHTML = highlightCode(j.code || "", state.codeLang);
     $("sign-preview").textContent = "";
   }
 }
@@ -2155,12 +2239,8 @@ function bindEvents() {
     toast("已复制到剪贴板 ✓", "ok");
   });
 
-  // 代码预览语言切换（仅 cURL 显示 SSH 请求按钮）
-  $("code-lang").addEventListener("change", (e) => {
-    state.codeLang = e.target.value;
-    updateConnBadge();
-    refreshPreview();
-  });
+  // 代码预览语言列表（左侧纵向，仅 cURL 显示 SSH 请求按钮）
+  renderCodegenSide();
   $("btn-save").addEventListener("click", doSave);
   $("btn-exec").addEventListener("click", doExec);
   $("btn-ssh-exec").addEventListener("click", doSshExec);
