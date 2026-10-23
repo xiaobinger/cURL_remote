@@ -1422,8 +1422,10 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 }
 .cal-kline-head.hidden { display: none; }
 .kline-head-hint { font-size: 10px; color: var(--text-3); opacity: .8; }
-.kline-ma-legend { display: flex; gap: 10px; }
-.kline-ma-legend i { font: 600 10px var(--font-mono); font-style: normal; }
+.kline-ma-legend { flex: 1; display: flex; justify-content: center; gap: 20px; }
+.kline-ma-item { display: inline-flex; align-items: center; gap: 5px; }
+.kline-ma-item b { font: 600 10px var(--font-mono); color: var(--text-3); }
+.kline-ma-item i { width: 16px; height: 2px; border-radius: 1px; }
 .cal-d { font: 600 13px var(--font-mono); color: var(--text-1); }
 .cal-l {
   font: 10px var(--font-ui); color: var(--text-3);
