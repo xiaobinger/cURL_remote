@@ -1465,6 +1465,8 @@ const dash = {
   sel: null,           // 选中日期 {y, m, d}，默认今天
   holidays: {},        // {year: {"YYYY-MM-DD": "休"/"班"}} 年度缓存
   holidaysLoading: {}, // 避免同年份并发请求
+  astock: {},          // {dateKey: {trading, open, close, pct, live}} 历史日缓存（当天不缓存，保证实时性）
+  astockDate: "",      // 当前行情条对应的日期（防止异步乱序）
   todos: [],           // 全部待办（后端持久化）
 };
 
@@ -1494,6 +1496,7 @@ function renderDashboard() {
   renderAlmanac();
   loadTodos();
   loadHolidays(dash.year);
+  loadAstock();
 }
 
 function renderDashStats() {
@@ -1570,6 +1573,7 @@ function renderCalendar() {
       renderCalendar();
       renderAlmanac();
       renderTodos();
+      loadAstock();
     });
     cell.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -1627,6 +1631,41 @@ async function loadHolidays(year) {
     }
   } catch (e) { /* 离线且无内置数据：不标注 */ }
   dash.holidaysLoading[year] = false;
+}
+
+/* 上证指数行情条（跟随日历选中日；非交易日 / 取数失败则隐藏，当天显示实时价且不缓存） */
+async function loadAstock() {
+  if (!dash.sel) return;
+  const pad = (n) => String(n).padStart(2, "0");
+  const key = `${dash.sel.y}-${pad(dash.sel.m)}-${pad(dash.sel.d)}`;
+  dash.astockDate = key;
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  if (dash.astock[key] && key !== todayKey) { renderAstock(); return; }
+  const j = await apiGet(`/api/astock?date=${key}`);
+  if (dash.astockDate !== key) return; // 等待期间用户又点了别的日期
+  if (j && j.trading) {
+    dash.astock[key] = j;
+  } else {
+    delete dash.astock[key]; // 非交易日 / 失败
+  }
+  renderAstock();
+}
+
+function renderAstock() {
+  const box = $("cal-stock");
+  if (!box) return;
+  const j = dash.astock[dash.astockDate];
+  if (!j) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const up = j.pct >= 0; // A 股口径：涨红跌绿
+  const sign = up ? "+" : "";
+  const priceLabel = j.live ? "实时" : "收";
+  box.innerHTML =
+    `<span class="stock-name">上证指数</span>` +
+    `<span class="stock-item">开 <b>${j.open.toFixed(2)}</b></span>` +
+    `<span class="stock-item">${priceLabel} <b class="${up ? "stock-up" : "stock-down"}">${j.close.toFixed(2)}</b></span>` +
+    `<span class="stock-pct ${up ? "stock-up" : "stock-down"}">${sign}${j.pct.toFixed(2)}%</span>`;
+  box.classList.remove("hidden");
 }
 
 /* 待办（跟随日历选中日；当日无待办则隐藏卡片） */
@@ -2496,7 +2535,7 @@ function bindEvents() {
     const n = new Date();
     dash.year = n.getFullYear(); dash.month = n.getMonth() + 1;
     dash.sel = { y: dash.year, m: dash.month, d: n.getDate() };
-    renderCalendar(); renderAlmanac(); renderTodos();
+    renderCalendar(); renderAlmanac(); renderTodos(); loadAstock();
   });
   $("saved-import").addEventListener("click", () => $("import-file").click());
   $("import-file").addEventListener("change", (e) => {

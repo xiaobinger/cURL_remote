@@ -137,6 +137,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 self._send_json(self.app.history)
             elif path == "/api/holidays":
                 self._holidays()
+            elif path == "/api/astock":
+                self._astock()
             elif path == "/api/todos":
                 self._send_json({"todos": load_todos()})
             elif path == "/api/events":
@@ -250,6 +252,64 @@ class _ApiHandler(BaseHTTPRequestHandler):
             m = BUILTIN_HOLIDAYS.get(year, {})
             cache[year] = m
             self._send_json({"map": m, "fallback": True})
+
+    def _astock(self):
+        """上证指数（sh000001）某日行情：历史走东方财富日 K 线，当天走腾讯实时行情。
+        返回 {"trading": bool, "open", "close", "pct", "live"}，非交易日 trading=false。"""
+        import datetime
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        date = (params.get("date") or "").strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            self._send_json({"error": "invalid date"}, 400)
+            return
+        today = datetime.date.today().isoformat()
+        try:
+            if date >= today:
+                self._send_json(self._astock_live(date))
+            else:
+                self._send_json(self._astock_kline(date))
+        except Exception as e:
+            logger.info("A股行情获取失败 %s: %s", date, e)
+            self._send_json({"error": str(e)})
+
+    @staticmethod
+    def _astock_kline(date):
+        """历史某天：东财日 K（f51 日期, f52 开, f53 收, f59 涨跌幅%）；无 K 线即非交易日"""
+        req = urllib.request.Request(
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+            f"?secid=1.000001&klt=101&fqt=0&beg={date.replace('-', '')}&end={date.replace('-', '')}"
+            "&fields1=f1,f2,f3&fields2=f51,f52,f53,f59",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                     "Referer": "https://quote.eastmoney.com/"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        klines = ((data.get("data") or {}).get("klines")) or []
+        if not klines:
+            return {"trading": False}
+        parts = klines[0].split(",")
+        return {"trading": True, "live": False,
+                "open": float(parts[1]), "close": float(parts[2]), "pct": float(parts[3])}
+
+    @staticmethod
+    def _astock_live(date):
+        """当天：腾讯实时行情（v_sh000001，~ 分隔；3 现价 4 昨收 5 今开 30 时间戳）。
+        时间戳日期与请求日不一致说明当天非交易日（接口返回的是最近交易日数据）。"""
+        req = urllib.request.Request(
+            "https://qt.gtimg.cn/q=sh000001",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            text = resp.read().decode("gbk", errors="replace")
+        body = text.split("=", 1)[1].strip().strip('";') if "=" in text else ""
+        f = body.split("~")
+        if len(f) < 31 or not f[3]:
+            return {"trading": False}
+        tick_date = f"{f[30][0:4]}-{f[30][4:6]}-{f[30][6:8]}"
+        if tick_date != date:
+            return {"trading": False}
+        cur, prev, opn = float(f[3]), float(f[4]), float(f[5])
+        pct = round((cur - prev) / prev * 100, 2) if prev else 0.0
+        return {"trading": True, "live": True, "open": opn, "close": cur, "pct": pct}
 
     def _save_todo(self, data):
         """待办增/改/删：action = add | toggle | del，返回全量列表"""

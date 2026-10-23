@@ -1375,6 +1375,19 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 }
 .cal-tag.cal-xiu { color: var(--red); background: var(--red-border); }
 .cal-tag.cal-ban { color: var(--yellow); background: var(--bg-input); border: 1px solid var(--border-soft); }
+/* 上证指数行情条（A 股口径：涨红跌绿） */
+.cal-stock {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 8px; padding: 6px 10px;
+  border-top: 1px dashed var(--border-soft);
+  font: 11px var(--font-ui); color: var(--text-2);
+}
+.cal-stock.hidden { display: none; }
+.stock-name { font-weight: 700; color: var(--text-3); }
+.stock-item b { font-family: var(--font-mono); font-weight: 600; }
+.stock-pct { font: 700 11px var(--font-mono); margin-left: auto; }
+.stock-up { color: var(--red); }
+.stock-down { color: var(--green, #16b981); }
 .cal-d { font: 600 13px var(--font-mono); color: var(--text-1); }
 .cal-l {
   font: 10px var(--font-ui); color: var(--text-3);
