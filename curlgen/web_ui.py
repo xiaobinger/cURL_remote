@@ -82,6 +82,44 @@ else:
     WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
 
+def _fetch_kline_days(start, end):
+    """上证指数日 K 双源自愈：东财优先，断连/反爬时回落腾讯。
+    start/end 为 YYYY-MM-DD；返回 [{date, open, close, high, low, vol}]（按日期升序）。"""
+    s, e = start.replace("-", ""), end.replace("-", "")
+    try:
+        req = urllib.request.Request(
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+            f"?secid=1.000001&klt=101&fqt=0&beg={s}&end={e}"
+            "&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                     "Referer": "https://quote.eastmoney.com/"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        days = []
+        for line in ((data.get("data") or {}).get("klines")) or []:
+            p = line.split(",")
+            if len(p) >= 6:
+                days.append({"date": p[0], "open": float(p[1]), "close": float(p[2]),
+                             "high": float(p[3]), "low": float(p[4]), "vol": float(p[5])})
+        return days
+    except Exception as ex:
+        logger.info("东财日K失败，回落腾讯 (%s~%s): %s", start, end, ex)
+    req = urllib.request.Request(
+        "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+        f"?param=sh000001,day,{start},{end},400,qfq",
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                 "Referer": "https://gu.qq.com/"})
+    with urllib.request.urlopen(req, timeout=6) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    raw = ((data.get("data") or {}).get("sh000001") or {}).get("day") or []
+    days = []
+    for p in raw:
+        if len(p) >= 6:
+            days.append({"date": p[0], "open": float(p[1]), "close": float(p[2]),
+                         "high": float(p[3]), "low": float(p[4]), "vol": float(p[5])})
+    return days
+
+
 class _ApiHandler(BaseHTTPRequestHandler):
     """本地 API：所有路由返回 JSON。app 由服务器启动前注入。"""
     app = None
@@ -96,6 +134,34 @@ class _ApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_static(self, path):
+        """前端静态资源：/ → index.html（替换 __PORT__），其余从 WEB_DIR 按白名单读取。
+        禁止路径穿越；仅本地随机端口提供服务。"""
+        rel = (path or "/").lstrip("/") or "index.html"
+        if ".." in rel or "\\" in rel:
+            self._send_json({"error": "not found"}, 404)
+            return
+        full = os.path.join(WEB_DIR, rel)
+        if not os.path.isfile(full):
+            self._send_json({"error": "not found"}, 404)
+            return
+        mime = self._STATIC_MIME.get(os.path.splitext(rel)[1].lower(),
+                                     "application/octet-stream")
+        try:
+            with open(full, "rb") as f:
+                content = f.read()
+            if rel == "index.html":
+                content = content.decode("utf-8").replace(
+                    "__PORT__", str(self.app.port)).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(content)
+        except Exception as e:
+            logger.error("静态资源读取失败 %s: %s", rel, e)
+
     def _read_json(self):
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b"{}"
@@ -108,9 +174,20 @@ class _ApiHandler(BaseHTTPRequestHandler):
         logger.debug("api %s - %s", self.address_string(), fmt % args)
 
     # ── 路由 ──
+    # 静态资源 MIME（页面经本地 HTTP 加载；setHtml 有体积上限，内嵌 ECharts 后超限会黑屏）
+    _STATIC_MIME = {
+        ".html": "text/html; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".js": "text/javascript; charset=utf-8",
+        ".png": "image/png",
+    }
+
     def do_GET(self):
         try:
             path = self.path.split("?")[0]
+            if not path.startswith("/api/"):
+                self._serve_static(path)
+                return
             if path == "/api/state":
                 ssh = normalize_ssh_config(load_ssh_config())
                 ssh_ready = bool(
@@ -277,21 +354,19 @@ class _ApiHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _astock_kline(date):
-        """历史某天：东财日 K（f51 日期, f52 开, f53 收, f59 涨跌幅%）；无 K 线即非交易日"""
-        req = urllib.request.Request(
-            "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-            f"?secid=1.000001&klt=101&fqt=0&beg={date.replace('-', '')}&end={date.replace('-', '')}"
-            "&fields1=f1,f2,f3&fields2=f51,f52,f53,f59",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                     "Referer": "https://quote.eastmoney.com/"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        klines = ((data.get("data") or {}).get("klines")) or []
-        if not klines:
+        """历史某天：日 K 双源自愈（东财→腾讯）；无 K 线即非交易日。
+        pct 用前一交易日收盘计算，兼容两个源。"""
+        import datetime
+        d0 = datetime.date.fromisoformat(date) - datetime.timedelta(days=15)
+        days = _fetch_kline_days(d0.isoformat(), date)
+        idx = next((i for i, d in enumerate(days) if d["date"] == date), None)
+        if idx is None:
             return {"trading": False}
-        parts = klines[0].split(",")
+        d = days[idx]
+        prev = days[idx - 1]["close"] if idx > 0 else d["open"]
+        pct = round((d["close"] - prev) / prev * 100, 2) if prev else 0.0
         return {"trading": True, "live": False,
-                "open": float(parts[1]), "close": float(parts[2]), "pct": float(parts[3])}
+                "open": d["open"], "close": d["close"], "pct": pct}
 
     @staticmethod
     def _astock_live(date):
@@ -314,7 +389,7 @@ class _ApiHandler(BaseHTTPRequestHandler):
         return {"trading": True, "live": True, "open": opn, "close": cur, "pct": pct}
 
     def _astock_month_kline(self):
-        """上证指数（sh000001）整月日 K：代理东财日 K，fields2 = 日期/开/收/高/低/成交量。
+        """上证指数（sh000001）整月日 K：日 K 双源自愈（东财→腾讯）。
         返回 {"days": [{date, open, close, high, low, vol}]}，非交易月（未来月等）days 为空。"""
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
         params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
@@ -322,23 +397,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
         if not re.match(r"^\d{4}-\d{2}$", month):
             self._send_json({"error": "invalid month"}, 400)
             return
-        ym = month.replace("-", "")
         try:
-            req = urllib.request.Request(
-                "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-                f"?secid=1.000001&klt=101&fqt=0&beg={ym}01&end={ym}31"
-                "&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56",
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                         "Referer": "https://quote.eastmoney.com/"})
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            days = []
-            for line in ((data.get("data") or {}).get("klines")) or []:
-                p = line.split(",")
-                if len(p) < 6:
-                    continue
-                days.append({"date": p[0], "open": float(p[1]), "close": float(p[2]),
-                             "high": float(p[3]), "low": float(p[4]), "vol": float(p[5])})
+            days = _fetch_kline_days(f"{month}-01", f"{month}-31")
             self._send_json({"days": days})
         except Exception as e:
             logger.info("A股月K获取失败 %s: %s", month, e)
@@ -502,24 +562,8 @@ class WebCurlGenerator(QMainWindow):
         self.view.setPage(page)
         self.setCentralWidget(self.view)
 
-        html_path = os.path.join(WEB_DIR, "index.html")
-        with open(html_path, "r", encoding="utf-8") as f:
-            html = f.read()
-        # setHtml 文档无法通过 file:// 加载外部资源，直接把 CSS/JS 内联
-        with open(os.path.join(WEB_DIR, "app.css"), "r", encoding="utf-8") as f:
-            css = f.read()
-        with open(os.path.join(WEB_DIR, "app.js"), "r", encoding="utf-8") as f:
-            js = f.read()
-        with open(os.path.join(WEB_DIR, "vendor", "lunar.js"), "r", encoding="utf-8") as f:
-            lunar_js = f.read()
-        with open(os.path.join(WEB_DIR, "vendor", "echarts.min.js"), "r", encoding="utf-8") as f:
-            echarts_js = f.read()
-        html = html.replace('<link rel="stylesheet" href="app.css">', f"<style>\n{css}\n</style>")
-        html = html.replace('<script src="vendor/lunar.js"></script>', f"<script>\n{lunar_js}\n</script>")
-        html = html.replace('<script src="vendor/echarts.min.js"></script>', f"<script>\n{echarts_js}\n</script>")
-        html = html.replace('<script src="app.js"></script>', f"<script>\n{js}\n</script>")
-        html = html.replace("__PORT__", str(self.port))
-        self.view.page().setHtml(html, QUrl.fromLocalFile(WEB_DIR.replace("\\", "/") + "/"))
+        # 页面经本地 HTTP 服务加载（setHtml 有体积上限，内嵌 ECharts 后超限黑屏）
+        self.view.load(QUrl(f"http://127.0.0.1:{self.port}/index.html"))
 
     def _on_console(self, level, message, line, source):
         logger.debug("web console [%s:%d] %s", os.path.basename(source or ""), line, message)

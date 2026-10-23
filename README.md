@@ -245,7 +245,7 @@ buildCurl/
     ├── http_executor.py       # ⚡ 本地直发 HTTP（urllib，自动跟随重定向）
     ├── ssh_executor.py        # 🖧 GateShell 堡垒机远程执行
     ├── web_ui.py              # 🌌 主窗口（星轨控制台 + 本地 API）
-    └── web/                   # 🌐 前端资源（运行时内联进 HTML）
+    └── web/                   # 🌐 前端资源（经本地 HTTP 服务加载）
         ├── index.html         # 结构骨架
         ├── app.css            # 样式（深/浅双主题令牌）
         ├── app.js             # 交互逻辑（高亮 / 悬浮 / 事件流 / 仪表盘）
@@ -339,9 +339,9 @@ sorted(key1=value1&key2=value2&...) + "key={secret}"
 
 - Python 端启动 `ThreadingHTTPServer` 于 `127.0.0.1` **随机端口**，只监听本机，天然安全。
 - 页面通过 `window.API_BASE` 与后端通信，执行输出经 **`/api/events` 事件流** 增量拉取刷新。
-- 由于 `setHtml` 文档无法通过 `file://` 加载外部资源，**CSS/JS 在启动时被读取并内联** 进 HTML（同时替换 `__PORT__` 占位符）。
+- 页面（含 ECharts / lunar.js 等本地资源）由同一 HTTP 服务按白名单提供，`QWebEngineView` 直接 `load()` 本地地址——避开 `setHtml` 的体积上限（内嵌大资源会超限黑屏），同时完成 `__PORT__` 占位符替换。
 
-> ⚠️ **改前端后需重启应用**：`app.css` / `app.js` / `index.html` 的改动在下次启动时才会被内联生效。
+> ⚠️ **改前端后需重启应用**：`app.css` / `app.js` / `index.html` 的改动在下次启动时才会加载生效。
 
 **前端兼容注意**：内置 QtWebEngine 的 Chromium 版本较老，前端 **避免使用 `inset` 简写、`color-mix()`** 等新特性（代码中已用兼容写法替代）。
 
@@ -448,7 +448,7 @@ pyinstaller CurlGenerator.spec
 <details>
 <summary><b>改了 app.js / app.css 为什么不生效？</b></summary>
 
-前端资源在应用启动时被内联进 HTML，**必须重启程序** 才会加载新内容。
+前端资源在应用启动时经本地 HTTP 服务加载进页面，**必须重启程序** 才会加载新内容。
 </details>
 
 <details>
