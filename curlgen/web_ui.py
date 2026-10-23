@@ -139,6 +139,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 self._holidays()
             elif path == "/api/astock":
                 self._astock()
+            elif path == "/api/astock_kline":
+                self._astock_month_kline()
             elif path == "/api/todos":
                 self._send_json({"todos": load_todos()})
             elif path == "/api/events":
@@ -311,6 +313,37 @@ class _ApiHandler(BaseHTTPRequestHandler):
         pct = round((cur - prev) / prev * 100, 2) if prev else 0.0
         return {"trading": True, "live": True, "open": opn, "close": cur, "pct": pct}
 
+    def _astock_month_kline(self):
+        """上证指数（sh000001）整月日 K：代理东财日 K，fields2 = 日期/开/收/高/低/成交量。
+        返回 {"days": [{date, open, close, high, low, vol}]}，非交易月（未来月等）days 为空。"""
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        month = (params.get("month") or "").strip()
+        if not re.match(r"^\d{4}-\d{2}$", month):
+            self._send_json({"error": "invalid month"}, 400)
+            return
+        ym = month.replace("-", "")
+        try:
+            req = urllib.request.Request(
+                "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+                f"?secid=1.000001&klt=101&fqt=0&beg={ym}01&end={ym}31"
+                "&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                         "Referer": "https://quote.eastmoney.com/"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            days = []
+            for line in ((data.get("data") or {}).get("klines")) or []:
+                p = line.split(",")
+                if len(p) < 6:
+                    continue
+                days.append({"date": p[0], "open": float(p[1]), "close": float(p[2]),
+                             "high": float(p[3]), "low": float(p[4]), "vol": float(p[5])})
+            self._send_json({"days": days})
+        except Exception as e:
+            logger.info("A股月K获取失败 %s: %s", month, e)
+            self._send_json({"error": str(e)})
+
     def _save_todo(self, data):
         """待办增/改/删：action = add | toggle | del，返回全量列表"""
         import time
@@ -479,8 +512,11 @@ class WebCurlGenerator(QMainWindow):
             js = f.read()
         with open(os.path.join(WEB_DIR, "vendor", "lunar.js"), "r", encoding="utf-8") as f:
             lunar_js = f.read()
+        with open(os.path.join(WEB_DIR, "vendor", "echarts.min.js"), "r", encoding="utf-8") as f:
+            echarts_js = f.read()
         html = html.replace('<link rel="stylesheet" href="app.css">', f"<style>\n{css}\n</style>")
         html = html.replace('<script src="vendor/lunar.js"></script>', f"<script>\n{lunar_js}\n</script>")
+        html = html.replace('<script src="vendor/echarts.min.js"></script>', f"<script>\n{echarts_js}\n</script>")
         html = html.replace('<script src="app.js"></script>', f"<script>\n{js}\n</script>")
         html = html.replace("__PORT__", str(self.port))
         self.view.page().setHtml(html, QUrl.fromLocalFile(WEB_DIR.replace("\\", "/") + "/"))

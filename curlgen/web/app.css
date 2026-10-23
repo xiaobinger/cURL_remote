@@ -1388,6 +1388,9 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 .stock-pct { font: 700 11px var(--font-mono); margin-left: auto; }
 .stock-up { color: var(--red); }
 .stock-down { color: var(--green, #16b981); }
+/* 上证指数月 K 线图 */
+.cal-kline { margin-top: 6px; height: 230px; width: 100%; }
+.cal-kline.hidden { display: none; }
 .cal-d { font: 600 13px var(--font-mono); color: var(--text-1); }
 .cal-l {
   font: 10px var(--font-ui); color: var(--text-3);

@@ -1467,6 +1467,9 @@ const dash = {
   holidaysLoading: {}, // 避免同年份并发请求
   astock: {},          // {dateKey: {trading, open, close, pct, live}} 历史日缓存（当天不缓存，保证实时性）
   astockDate: "",      // 当前行情条对应的日期（防止异步乱序）
+  kline: {},           // {monthKey: [days]} 月 K 缓存（当月不缓存，盘中会变化）
+  klineMonth: "",      // 当前 K 线图对应的月份（防止异步乱序）
+  klineChart: null,    // ECharts 实例（复用）
   todos: [],           // 全部待办（后端持久化）
 };
 
@@ -1497,6 +1500,7 @@ function renderDashboard() {
   loadTodos();
   loadHolidays(dash.year);
   loadAstock();
+  loadKline();
 }
 
 function renderDashStats() {
@@ -1574,6 +1578,7 @@ function renderCalendar() {
       renderAlmanac();
       renderTodos();
       loadAstock();
+      loadKline();
     });
     cell.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -1666,6 +1671,120 @@ function renderAstock() {
     `<span class="stock-item">${priceLabel} <b class="${up ? "stock-up" : "stock-down"}">${j.close.toFixed(2)}</b></span>` +
     `<span class="stock-pct ${up ? "stock-up" : "stock-down"}">${sign}${j.pct.toFixed(2)}%</span>`;
   box.classList.remove("hidden");
+}
+
+/* 上证指数月 K 线图（跟随日历选中日所在月份；当月不缓存，无数据隐藏；点击蜡烛联动选中日） */
+async function loadKline() {
+  if (!dash.sel) return;
+  const pad = (n) => String(n).padStart(2, "0");
+  const mk = `${dash.sel.y}-${pad(dash.sel.m)}`;
+  dash.klineMonth = mk;
+  const now = new Date();
+  const curMk = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  if (dash.kline[mk] && mk !== curMk) { renderKline(); return; }
+  const j = await apiGet(`/api/astock_kline?month=${mk}`);
+  if (dash.klineMonth !== mk) return; // 等待期间用户又切了月份
+  if (j && j.days && j.days.length) {
+    dash.kline[mk] = j.days;
+  } else {
+    delete dash.kline[mk];
+  }
+  renderKline();
+}
+
+function renderKline() {
+  const box = $("cal-kline");
+  if (!box || typeof echarts === "undefined") return;
+  const days = dash.kline[dash.klineMonth];
+  if (!days || !days.length) {
+    box.classList.add("hidden");
+    if (dash.klineChart) { dash.klineChart.dispose(); dash.klineChart = null; }
+    return;
+  }
+  const css = getComputedStyle(document.documentElement);
+  const RED = css.getPropertyValue("--red").trim() || "#f4506c";
+  const GREEN = css.getPropertyValue("--green").trim() || "#2dd4a0";
+  const TEXT3 = css.getPropertyValue("--text-3").trim() || "#7c8aa0";
+  const BORDER = css.getPropertyValue("--border-soft").trim() || "#333";
+  const ACCENT = css.getPropertyValue("--accent").trim() || "#5b9dff";
+  const pad = (n) => String(n).padStart(2, "0");
+  const selKey = dash.sel ? `${dash.sel.y}-${pad(dash.sel.m)}-${pad(dash.sel.d)}` : "";
+
+  const dates = days.map((d) => d.date.slice(5)); // MM-DD
+  // ECharts 蜡烛数据顺序：[开, 收, 低, 高]；选中日加高亮描边
+  const kdata = days.map((d) => {
+    const item = { value: [d.open, d.close, d.low, d.high] };
+    if (d.date === selKey) {
+      item.itemStyle = { borderColor: ACCENT, borderWidth: 2 };
+    }
+    return item;
+  });
+  const vdata = days.map((d) => ({
+    value: d.vol,
+    itemStyle: { color: d.close >= d.open ? RED : GREEN },
+  }));
+
+  box.classList.remove("hidden");
+  if (!dash.klineChart) dash.klineChart = echarts.init(box);
+  if (!dash._klineResizeBound) {
+    dash._klineResizeBound = true;
+    window.addEventListener("resize", () => {
+      if (dash.klineChart && !$("cal-kline").classList.contains("hidden")) dash.klineChart.resize();
+    });
+  }
+  const chart = dash.klineChart;
+  chart.setOption({
+    animation: false,
+    tooltip: {
+      trigger: "axis", axisPointer: { type: "cross" },
+      backgroundColor: "rgba(20,24,32,.92)", borderColor: BORDER,
+      textStyle: { color: "#dfe6f2", fontSize: 11 },
+      formatter: (ps) => {
+        const d = days[ps[0].dataIndex];
+        if (!d) return "";
+        const pctCls = d.close >= d.open ? RED : GREEN;
+        const vol = d.vol >= 1e8 ? (d.vol / 1e8).toFixed(2) + " 亿手" : (d.vol / 1e4).toFixed(0) + " 万手";
+        return `<b>${d.date}</b><br>开 ${d.open.toFixed(2)}　收 <span style="color:${pctCls}">${d.close.toFixed(2)}</span><br>高 ${d.high.toFixed(2)}　低 ${d.low.toFixed(2)}<br>量 ${vol}`;
+      },
+    },
+    axisPointer: { link: [{ xAxisIndex: "all" }] },
+    grid: [
+      { left: 52, right: 12, top: 8, height: "58%" },
+      { left: 52, right: 12, top: "70%", height: "20%" },
+    ],
+    xAxis: [
+      { type: "category", data: dates, gridIndex: 0,
+        axisLine: { lineStyle: { color: BORDER } }, axisLabel: { show: false }, axisTick: { show: false } },
+      { type: "category", data: dates, gridIndex: 1,
+        axisLine: { lineStyle: { color: BORDER } },
+        axisLabel: { color: TEXT3, fontSize: 9, interval: Math.ceil(dates.length / 8) },
+        axisTick: { show: false } },
+    ],
+    yAxis: [
+      { scale: true, gridIndex: 0, position: "left",
+        axisLabel: { color: TEXT3, fontSize: 9, formatter: (v) => v.toFixed(0) },
+        splitLine: { lineStyle: { color: BORDER, type: "dashed" } } },
+      { scale: true, gridIndex: 1,
+        axisLabel: { color: TEXT3, fontSize: 9, formatter: (v) => (v / 1e8).toFixed(1) + "亿" },
+        splitLine: { show: false } },
+    ],
+    series: [
+      { name: "日K", type: "candlestick", data: kdata, xAxisIndex: 0, yAxisIndex: 0,
+        itemStyle: { color: RED, color0: GREEN, borderColor: RED, borderColor0: GREEN } },
+      { name: "成交量", type: "bar", data: vdata, xAxisIndex: 1, yAxisIndex: 1, barWidth: "60%" },
+    ],
+  }, true);
+  chart.resize();
+  if (!chart._klineClickBound) {
+    chart._klineClickBound = true;
+    chart.on("click", (p) => {
+      const d = days[p.dataIndex];
+      if (!d) return;
+      const [y, m, dd] = d.date.split("-").map(Number);
+      dash.sel = { y, m, d: dd };
+      renderCalendar(); renderAlmanac(); renderTodos(); loadAstock(); renderKline();
+    });
+  }
 }
 
 /* 待办（跟随日历选中日；当日无待办则隐藏卡片） */
@@ -2535,7 +2654,7 @@ function bindEvents() {
     const n = new Date();
     dash.year = n.getFullYear(); dash.month = n.getMonth() + 1;
     dash.sel = { y: dash.year, m: dash.month, d: n.getDate() };
-    renderCalendar(); renderAlmanac(); renderTodos(); loadAstock();
+    renderCalendar(); renderAlmanac(); renderTodos(); loadAstock(); loadKline();
   });
   $("saved-import").addEventListener("click", () => $("import-file").click());
   $("import-file").addEventListener("change", (e) => {
