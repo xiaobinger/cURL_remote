@@ -2241,6 +2241,12 @@ function bindEvents() {
 
   // 代码预览语言列表（左侧纵向，仅 cURL 显示 SSH 请求按钮）
   renderCodegenSide();
+  // 语言列表折叠 / 展开
+  $("cg-collapse").addEventListener("click", () => {
+    const wrap = $("codegen-wrap");
+    const collapsed = wrap.classList.toggle("collapsed");
+    $("cg-collapse").textContent = collapsed ? "»" : "«";
+  });
   $("btn-save").addEventListener("click", doSave);
   $("btn-exec").addEventListener("click", doExec);
   $("btn-ssh-exec").addEventListener("click", doSshExec);

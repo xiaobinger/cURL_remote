@@ -1420,6 +1420,10 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
   width: 128px; flex: none; overflow-y: auto;
   border-right: 1px solid var(--border-soft);
   padding: 8px 8px 14px;
+  transition: width .18s var(--ease), padding .18s var(--ease);
+}
+.codegen-wrap.collapsed .codegen-side {
+  width: 0; padding: 0; border-right: none; overflow: hidden;
 }
 .cg-item {
   display: flex; align-items: center; gap: 8px;
@@ -1428,6 +1432,7 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
   font: 12px var(--font-ui);
   transition: all .15s var(--ease);
   user-select: none;
+  white-space: nowrap;
 }
 .cg-item:hover { background: var(--bg-hover); color: var(--text-1); }
 .cg-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
@@ -1440,6 +1445,21 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 }
 .cg-item.active .cg-badge { color: var(--accent); border-color: var(--accent); background: var(--bg-panel-solid); }
 .codegen-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.codegen-main .code-block { margin-top: 14px; }
+
+/* 代码框角标悬浮按钮（复制 / 折叠语言列表） */
+.code-icon {
+  position: absolute; top: 24px; z-index: 5;
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  background: var(--bg-panel-solid); color: var(--text-3);
+  font: 13px var(--font-ui); cursor: pointer;
+  opacity: .75; transition: all .15s var(--ease);
+}
+.code-icon:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
+.code-copy { right: 26px; }
+.cg-collapse { left: 26px; }
 
 /* 语法高亮 token（沿用 curl 配色体系） */
 .tok-kw   { color: var(--mauve); font-weight: 600; }
