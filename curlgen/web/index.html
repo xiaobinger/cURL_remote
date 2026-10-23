@@ -185,10 +185,15 @@
       </div>
       <div class="ppage" data-ppage="preview">
         <div class="codegen-wrap" id="codegen-wrap">
-          <div class="codegen-side" id="codegen-side"></div>
+          <div class="codegen-side" id="codegen-side">
+            <div class="cg-head">
+              <span class="cg-title">代码语言</span>
+              <button class="cg-toggle" id="cg-collapse" title="折叠语言列表">«</button>
+            </div>
+            <div class="cg-list" id="cg-list"></div>
+          </div>
           <div class="codegen-main">
             <pre id="curl-preview" class="code-block"><span class="placeholder">输入 URL 后实时生成代码</span></pre>
-            <button class="code-icon cg-collapse" id="cg-collapse" title="折叠 / 展开语言列表">«</button>
             <button class="code-icon code-copy" id="btn-copy2" title="复制代码">⧉</button>
             <button class="ssh-fab" id="btn-ssh-exec" title="通过 SSH 跳板机远程执行（需二次确认）">🖧 SSH 请求</button>
           </div>

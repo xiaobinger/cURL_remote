@@ -218,9 +218,9 @@ const CODE_LANGS = [
 ];
 
 function renderCodegenSide() {
-  const side = $("codegen-side");
-  if (!side) return;
-  side.innerHTML = "";
+  const list = $("cg-list");
+  if (!list) return;
+  list.innerHTML = "";
   CODE_LANGS.forEach((l) => {
     const el = document.createElement("div");
     el.className = "cg-item" + (l.id === state.codeLang ? " active" : "");
@@ -232,7 +232,7 @@ function renderCodegenSide() {
       updateConnBadge();
       refreshPreview();
     });
-    side.appendChild(el);
+    list.appendChild(el);
   });
 }
 
@@ -2241,11 +2241,13 @@ function bindEvents() {
 
   // 代码预览语言列表（左侧纵向，仅 cURL 显示 SSH 请求按钮）
   renderCodegenSide();
-  // 语言列表折叠 / 展开
+  // 语言列表折叠 / 展开（按钮收在语言栏头部，折叠后留细轨道）
   $("cg-collapse").addEventListener("click", () => {
     const wrap = $("codegen-wrap");
     const collapsed = wrap.classList.toggle("collapsed");
-    $("cg-collapse").textContent = collapsed ? "»" : "«";
+    const btn = $("cg-collapse");
+    btn.textContent = collapsed ? "»" : "«";
+    btn.title = collapsed ? "展开语言列表" : "折叠语言列表";
   });
   $("btn-save").addEventListener("click", doSave);
   $("btn-exec").addEventListener("click", doExec);
