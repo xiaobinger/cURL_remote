@@ -48,6 +48,7 @@
         <div class="theme-menu" id="theme-menu"></div>
       </span>
       <button class="side-icon" id="nav-ai" title="AI 设置">🤖</button>
+      <button class="side-icon" id="nav-stocks" title="自选股管理">📈</button>
     </div>
     <div id="conn-badge" class="conn-badge">● 本地模式</div>
   </div>
@@ -381,6 +382,20 @@
       <button class="btn btn-ghost" data-close>取消</button>
       <button class="btn btn-primary" id="ai-gen-run">✨ 生成</button>
       <button class="btn btn-apply" id="ai-gen-apply" hidden>✓ 应用</button>
+    </div>
+  </div>
+
+  <!-- 自选股管理 -->
+  <div class="modal" id="modal-stocks">
+    <div class="modal-title">自选股管理 <span class="modal-sub">6 位代码（6 开头=沪市 / 0、3 开头=深市）或 sh/sz 前缀 · 联网校验自动补全名称</span></div>
+    <div class="stock-add-row">
+      <input id="stock-code-input" type="text" placeholder="代码，如 600519" spellcheck="false">
+      <input id="stock-name-input" type="text" placeholder="名称（校验后自动补全）" spellcheck="false">
+      <button class="btn btn-primary" id="stock-add-btn">校验并添加</button>
+    </div>
+    <div class="stock-list" id="stock-list"></div>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" data-close>关闭</button>
     </div>
   </div>
 

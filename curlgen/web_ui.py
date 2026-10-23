@@ -24,6 +24,7 @@ from .config import (
     load_ssh_config, save_ssh_config,
     load_saved_requests, save_saved_requests,
     load_todos, save_todos,
+    load_stocks, save_stocks,
     normalize_ssh_config, load_ssh_targets,
     resolve_ssh_cfg, env_ssh_target_alias,
 )
@@ -82,14 +83,34 @@ else:
     WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
 
-def _fetch_kline_days(start, end):
-    """上证指数日 K 双源自愈：东财优先，断连/反爬时回落腾讯。
+def _normalize_stock_code(raw):
+    """统一股票代码为带市场前缀形式：sh600519 / sz000001 / sh000001（指数）。
+    纯 6 位数字按规则推断市场：6→沪，0/3→深；已带 sh/sz 前缀原样转小写。
+    无法识别返回 None。"""
+    s = (raw or "").strip().lower()
+    if re.match(r"^(sh|sz)\d{6}$", s):
+        return s
+    if re.match(r"^\d{6}$", s):
+        if s[0] == "6":
+            return "sh" + s
+        if s[0] in ("0", "3"):
+            return "sz" + s
+    return None
+
+
+def _secid(code):
+    """腾讯风格代码（sh600519）→ 东财 secid（1.600519 / 0.000001）"""
+    return ("1." if code.startswith("sh") else "0.") + code[2:]
+
+
+def _fetch_kline_days(start, end, code="sh000001"):
+    """日 K 双源自愈：东财优先，断连/反爬时回落腾讯。
     start/end 为 YYYY-MM-DD；返回 [{date, open, close, high, low, vol}]（按日期升序）。"""
     s, e = start.replace("-", ""), end.replace("-", "")
     try:
         req = urllib.request.Request(
             "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-            f"?secid=1.000001&klt=101&fqt=0&beg={s}&end={e}"
+            f"?secid={_secid(code)}&klt=101&fqt=0&beg={s}&end={e}"
             "&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
                      "Referer": "https://quote.eastmoney.com/"})
@@ -101,17 +122,21 @@ def _fetch_kline_days(start, end):
             if len(p) >= 6:
                 days.append({"date": p[0], "open": float(p[1]), "close": float(p[2]),
                              "high": float(p[3]), "low": float(p[4]), "vol": float(p[5])})
-        return days
+        if days:
+            return days
+        raise ValueError("empty klines")
     except Exception as ex:
-        logger.info("东财日K失败，回落腾讯 (%s~%s): %s", start, end, ex)
+        logger.info("东财日K失败，回落腾讯 %s (%s~%s): %s", code, start, end, ex)
     req = urllib.request.Request(
         "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
-        f"?param=sh000001,day,{start},{end},400,qfq",
+        f"?param={code},day,{start},{end},400,qfq",
         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
                  "Referer": "https://gu.qq.com/"})
     with urllib.request.urlopen(req, timeout=6) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    raw = ((data.get("data") or {}).get("sh000001") or {}).get("day") or []
+    # 指数返回 day，个股前复权返回 qfqday（qfq 以最新价为锚，尾部与实时价一致）
+    d = (data.get("data") or {}).get(code) or {}
+    raw = d.get("day") or d.get("qfqday") or d.get("hfqday") or []
     days = []
     for p in raw:
         if len(p) >= 6:
@@ -203,6 +228,7 @@ class _ApiHandler(BaseHTTPRequestHandler):
                     "ssh": {k: v for k, v in ssh.items() if k != "jump_pass"},
                     "ssh_ready": ssh_ready,
                     "ai": load_ai_config(),
+                    "stocks": load_stocks(),
                 })
             elif path == "/api/envs":
                 self._send_json(load_env_configs())
@@ -220,6 +246,10 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 self._astock_month_kline()
             elif path == "/api/todos":
                 self._send_json({"todos": load_todos()})
+            elif path == "/api/stocks":
+                self._send_json({"stocks": load_stocks()})
+            elif path == "/api/stock_lookup":
+                self._stock_lookup()
             elif path == "/api/events":
                 query = self.path.split("?", 1)[1] if "?" in self.path else ""
                 since = 0
@@ -274,6 +304,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True})
             elif path == "/api/todos":
                 self._save_todo(data)
+            elif path == "/api/stocks":
+                self._save_stock(data)
             elif path == "/api/save_ai":
                 self._send_json({"ok": True, "ai": save_ai_config(data)})
             elif path == "/api/ai_script":
@@ -333,7 +365,7 @@ class _ApiHandler(BaseHTTPRequestHandler):
             self._send_json({"map": m, "fallback": True})
 
     def _astock(self):
-        """上证指数（sh000001）某日行情：历史走东方财富日 K 线，当天走腾讯实时行情。
+        """某日行情：历史走日 K 双源，当天走腾讯实时行情。code 缺省 sh000001（上证指数）。
         返回 {"trading": bool, "open", "close", "pct", "live"}，非交易日 trading=false。"""
         import datetime
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
@@ -342,23 +374,27 @@ class _ApiHandler(BaseHTTPRequestHandler):
         if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
             self._send_json({"error": "invalid date"}, 400)
             return
+        code = _normalize_stock_code(params.get("code") or "sh000001")
+        if not code:
+            self._send_json({"error": "invalid code"}, 400)
+            return
         today = datetime.date.today().isoformat()
         try:
             if date >= today:
-                self._send_json(self._astock_live(date))
+                self._send_json(self._astock_live(date, code))
             else:
-                self._send_json(self._astock_kline(date))
+                self._send_json(self._astock_kline(date, code))
         except Exception as e:
-            logger.info("A股行情获取失败 %s: %s", date, e)
+            logger.info("A股行情获取失败 %s %s: %s", code, date, e)
             self._send_json({"error": str(e)})
 
     @staticmethod
-    def _astock_kline(date):
+    def _astock_kline(date, code="sh000001"):
         """历史某天：日 K 双源自愈（东财→腾讯）；无 K 线即非交易日。
         pct 用前一交易日收盘计算，兼容两个源。"""
         import datetime
         d0 = datetime.date.fromisoformat(date) - datetime.timedelta(days=15)
-        days = _fetch_kline_days(d0.isoformat(), date)
+        days = _fetch_kline_days(d0.isoformat(), date, code)
         idx = next((i for i, d in enumerate(days) if d["date"] == date), None)
         if idx is None:
             return {"trading": False}
@@ -369,40 +405,109 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 "open": d["open"], "close": d["close"], "pct": pct}
 
     @staticmethod
-    def _astock_live(date):
-        """当天：腾讯实时行情（v_sh000001，~ 分隔；3 现价 4 昨收 5 今开 30 时间戳）。
+    def _astock_live(date, code="sh000001"):
+        """当天：腾讯实时行情（v_sh000001，~ 分隔；3 现价 4 昨收 5 今开 6 成交量(手)
+        30 时间戳 33 最高 34 最低）。
         时间戳日期与请求日不一致说明当天非交易日（接口返回的是最近交易日数据）。"""
         req = urllib.request.Request(
-            "https://qt.gtimg.cn/q=sh000001",
+            f"https://qt.gtimg.cn/q={code}",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         with urllib.request.urlopen(req, timeout=6) as resp:
             text = resp.read().decode("gbk", errors="replace")
         body = text.split("=", 1)[1].strip().strip('";') if "=" in text else ""
         f = body.split("~")
-        if len(f) < 31 or not f[3]:
+        if len(f) < 35 or not f[3]:
             return {"trading": False}
         tick_date = f"{f[30][0:4]}-{f[30][4:6]}-{f[30][6:8]}"
         if tick_date != date:
             return {"trading": False}
         cur, prev, opn = float(f[3]), float(f[4]), float(f[5])
         pct = round((cur - prev) / prev * 100, 2) if prev else 0.0
-        return {"trading": True, "live": True, "open": opn, "close": cur, "pct": pct}
+        return {"trading": True, "live": True, "open": opn, "close": cur, "pct": pct,
+                "high": float(f[33] or 0), "low": float(f[34] or 0),
+                "vol": float(f[6] or 0)}
 
     def _astock_month_kline(self):
-        """上证指数（sh000001）整月日 K：日 K 双源自愈（东财→腾讯）。
+        """整月日 K：双源自愈；当月会额外把腾讯日 K 缺失的「今日形成中蜡烛」用实时行情补上。
         返回 {"days": [{date, open, close, high, low, vol}]}，非交易月（未来月等）days 为空。"""
+        import datetime
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
         params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
         month = (params.get("month") or "").strip()
         if not re.match(r"^\d{4}-\d{2}$", month):
             self._send_json({"error": "invalid month"}, 400)
             return
+        code = _normalize_stock_code(params.get("code") or "sh000001")
+        if not code:
+            self._send_json({"error": "invalid code"}, 400)
+            return
         try:
-            days = _fetch_kline_days(f"{month}-01", f"{month}-31")
+            days = _fetch_kline_days(f"{month}-01", f"{month}-31", code)
+            today = datetime.date.today().isoformat()
+            if month == today[:7]:
+                live = self._astock_live(today, code)
+                if live.get("trading"):
+                    candle = {"date": today, "open": live["open"],
+                              "close": live["close"],
+                              "high": live["high"] or max(live["open"], live["close"]),
+                              "low": live["low"] or min(live["open"], live["close"]),
+                              "vol": live["vol"]}
+                    if days and days[-1]["date"] == today:
+                        days[-1] = candle
+                    else:
+                        days.append(candle)
             self._send_json({"days": days})
         except Exception as e:
-            logger.info("A股月K获取失败 %s: %s", month, e)
+            logger.info("A股月K获取失败 %s %s: %s", code, month, e)
             self._send_json({"error": str(e)})
+
+    def _stock_lookup(self):
+        """联网校验股票代码并补全名称（腾讯实时行情 f[1]）。
+        返回 {"code": "sh600519", "name": "贵州茅台"}；代码无效返回 error。"""
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        code = _normalize_stock_code(params.get("code") or "")
+        if not code:
+            self._send_json({"error": "代码格式不支持（6 位数字或 sh/sz 前缀）"})
+            return
+        try:
+            req = urllib.request.Request(
+                f"https://qt.gtimg.cn/q={code}",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                text = resp.read().decode("gbk", errors="replace")
+            body = text.split("=", 1)[1].strip().strip('";') if "=" in text else ""
+            f = body.split("~")
+            if len(f) < 2 or not f[1].strip():
+                raise ValueError("not found")
+            self._send_json({"code": code, "name": f[1].strip()})
+        except Exception as e:
+            logger.info("股票代码校验失败 %s: %s", code, e)
+            self._send_json({"error": "查不到该代码，请检查是否输入正确"})
+
+    def _save_stock(self, data):
+        """自选股增/删：action = add {code, name} | del {code}，返回全量列表"""
+        stocks = load_stocks()
+        action = data.get("action")
+        if action == "add":
+            code = _normalize_stock_code(data.get("code") or "")
+            name = (data.get("name") or "").strip()
+            if not code or not name:
+                self._send_json({"error": "代码或名称为空"})
+                return
+            if not any(s.get("code") == code for s in stocks):
+                stocks.append({"code": code, "name": name})
+        elif action == "del":
+            code = (data.get("code") or "").strip().lower()
+            if code == "sh000001":
+                self._send_json({"error": "上证指数为内置标的，不可删除"})
+                return
+            stocks = [s for s in stocks if s.get("code") != code]
+        else:
+            self._send_json({"error": "unknown action"}, 400)
+            return
+        save_stocks(stocks)
+        self._send_json({"stocks": stocks})
 
     def _save_todo(self, data):
         """待办增/改/删：action = add | toggle | del，返回全量列表"""

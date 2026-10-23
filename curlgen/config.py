@@ -24,6 +24,7 @@ SSH_CONFIG_FILE = os.path.join(CONFIG_DIR, "ssh_config.json")
 SAVED_REQUESTS_FILE = os.path.join(CONFIG_DIR, "saved_requests.json")
 SIGN_CONFIG_FILE = os.path.join(CONFIG_DIR, "sign_configs.json")
 TODO_FILE = os.path.join(CONFIG_DIR, "todos.json")
+STOCKS_FILE = os.path.join(CONFIG_DIR, "stocks.json")
 LOG_DIR = os.path.join(CONFIG_DIR, "logs")
 
 
@@ -111,6 +112,32 @@ def save_todos(data):
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error("保存待办失败: %s", e)
+        raise
+
+
+# ──────────────────────────── 自选股（首页仪表盘行情/K线） ────────────────────────────
+DEFAULT_STOCKS = [{"code": "sh000001", "name": "上证指数"}]
+
+
+def load_stocks():
+    """[{code(带sh/sz前缀), name}]；为空时回落默认上证指数"""
+    if os.path.exists(STOCKS_FILE):
+        try:
+            with open(STOCKS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list) and data:
+                return data
+        except Exception as e:
+            logger.error("加载自选股失败: %s", e)
+    return list(DEFAULT_STOCKS)
+
+
+def save_stocks(data):
+    try:
+        with open(STOCKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error("保存自选股失败: %s", e)
         raise
 
 

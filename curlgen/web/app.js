@@ -38,6 +38,8 @@ const state = {
   history: [],
   ssh: {},
   ai: {},
+  stocks: [],        // 自选股 [{code(带sh/sz前缀), name}]，含内置上证指数
+  stockCode: "sh000001",  // 当前行情/K线标的（localStorage 持久化）
   savedFilter: "",
   sessionExec: { total: 0, ok: 0 },  // 本次会话执行统计（成功率按 HTTP<400 或传输成功计）
   vars: {},          // 脚本会话变量
@@ -1638,17 +1640,24 @@ async function loadHolidays(year) {
   dash.holidaysLoading[year] = false;
 }
 
-/* 上证指数行情条（跟随日历选中日；非交易日 / 取数失败则隐藏，当天显示实时价且不缓存） */
+/* 当前行情标的（state.stocks 未加载时回落上证指数） */
+function curStock() {
+  return (state.stocks || []).find((s) => s.code === state.stockCode)
+      || { code: "sh000001", name: "上证指数" };
+}
+
+/* 行情条（跟随日历选中日 + 当前标的；非交易日 / 取数失败则隐藏，当天显示实时价且不缓存） */
 async function loadAstock() {
   if (!dash.sel) return;
   const pad = (n) => String(n).padStart(2, "0");
-  const key = `${dash.sel.y}-${pad(dash.sel.m)}-${pad(dash.sel.d)}`;
+  const code = curStock().code;
+  const key = `${code}|${dash.sel.y}-${pad(dash.sel.m)}-${pad(dash.sel.d)}`;
   dash.astockDate = key;
   const now = new Date();
-  const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const todayKey = `${code}|${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   if (dash.astock[key] && key !== todayKey) { renderAstock(); return; }
-  const j = await apiGet(`/api/astock?date=${key}`);
-  if (dash.astockDate !== key) return; // 等待期间用户又点了别的日期
+  const j = await apiGet(`/api/astock?date=${key.split("|")[1]}&code=${code}`);
+  if (dash.astockDate !== key) return; // 等待期间用户又点了别的日期/切了标的
   if (j && j.trading) {
     dash.astock[key] = j;
   } else {
@@ -1666,24 +1675,41 @@ function renderAstock() {
   const sign = up ? "+" : "";
   const priceLabel = j.live ? "实时" : "收";
   box.innerHTML =
-    `<span class="stock-name">上证指数</span>` +
+    `<span class="stock-name" id="stock-switch" title="点击切换标的">${escapeHtml(curStock().name)} <i>▾</i></span>` +
     `<span class="stock-item">开 <b>${j.open.toFixed(2)}</b></span>` +
     `<span class="stock-item">${priceLabel} <b class="${up ? "stock-up" : "stock-down"}">${j.close.toFixed(2)}</b></span>` +
     `<span class="stock-pct ${up ? "stock-up" : "stock-down"}">${sign}${j.pct.toFixed(2)}%</span>`;
   box.classList.remove("hidden");
+  $("stock-switch").addEventListener("click", (e) => {
+    const items = (state.stocks || []).map((s) => [
+      (s.code === state.stockCode ? "✓ " : "　") + `${s.name}（${s.code}）`,
+      () => switchStock(s.code),
+    ]);
+    showCtxMenu(e.clientX, e.clientY, items);
+  });
 }
 
-/* 上证指数月 K 线图（跟随日历选中日所在月份；当月不缓存，无数据隐藏；点击蜡烛联动选中日） */
+/* 切换行情标的：持久化选择，刷新行情条与 K 线 */
+function switchStock(code) {
+  if (code === state.stockCode) return;
+  state.stockCode = code;
+  try { localStorage.setItem("cg-stock", code); } catch (e) { /* 忽略 */ }
+  loadAstock();
+  loadKline();
+}
+
+/* 月 K 线图（跟随日历选中日所在月份 + 当前标的；当月不缓存，无数据隐藏；点击蜡烛联动选中日） */
 async function loadKline() {
   if (!dash.sel) return;
   const pad = (n) => String(n).padStart(2, "0");
-  const mk = `${dash.sel.y}-${pad(dash.sel.m)}`;
+  const code = curStock().code;
+  const mk = `${code}|${dash.sel.y}-${pad(dash.sel.m)}`;
   dash.klineMonth = mk;
   const now = new Date();
-  const curMk = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const curMk = `${code}|${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
   if (dash.kline[mk] && mk !== curMk) { renderKline(); return; }
-  const j = await apiGet(`/api/astock_kline?month=${mk}`);
-  if (dash.klineMonth !== mk) return; // 等待期间用户又切了月份
+  const j = await apiGet(`/api/astock_kline?month=${mk.split("|")[1]}&code=${code}`);
+  if (dash.klineMonth !== mk) return; // 等待期间用户又切了月份/标的
   if (j && j.days && j.days.length) {
     dash.kline[mk] = j.days;
   } else {
@@ -2410,6 +2436,84 @@ async function saveAiConfig() {
   closeModal();
 }
 
+/* ─────────── 自选股管理（📈 侧栏图标） ─────────── */
+async function openStocksModal() {
+  $("stock-code-input").value = "";
+  $("stock-name-input").value = "";
+  renderStockList();
+  openModal("modal-stocks");
+  const j = await apiGet("/api/stocks"); // 每次打开刷新，防止多实例不同步
+  if (j && j.stocks) { state.stocks = j.stocks; renderStockList(); }
+}
+
+function renderStockList() {
+  const box = $("stock-list");
+  const stocks = state.stocks || [];
+  if (!stocks.length) {
+    box.innerHTML = '<div class="dash-loading">暂无自选股</div>';
+    return;
+  }
+  box.innerHTML = "";
+  stocks.forEach((s) => {
+    const row = document.createElement("div");
+    row.className = "stock-row";
+    const cur = s.code === state.stockCode;
+    const info = document.createElement("span");
+    info.className = "stock-row-info";
+    info.innerHTML = `<b>${escapeHtml(s.name)}</b><span class="stock-row-code">${escapeHtml(s.code)}</span>` +
+      (cur ? '<span class="stock-row-cur">当前</span>' : "");
+    const ops = document.createElement("span");
+    ops.className = "stock-row-ops";
+    if (!cur) {
+      const use = document.createElement("button");
+      use.className = "btn btn-mini";
+      use.textContent = "切换";
+      use.title = "设为当前行情标的";
+      use.addEventListener("click", () => { switchStock(s.code); renderStockList(); });
+      ops.appendChild(use);
+    }
+    if (s.code !== "sh000001") {
+      const del = document.createElement("button");
+      del.className = "btn btn-mini danger";
+      del.textContent = "删除";
+      del.addEventListener("click", async () => {
+        const j = await api("/api/stocks", { action: "del", code: s.code });
+        if (j.error) { toast(j.error, "err"); return; }
+        state.stocks = j.stocks || [];
+        renderStockList();
+        toast("已删除 ✓", "ok");
+      });
+      ops.appendChild(del);
+    }
+    row.appendChild(info);
+    row.appendChild(ops);
+    box.appendChild(row);
+  });
+}
+
+async function addStock() {
+  const code = $("stock-code-input").value.trim();
+  if (!code) { toast("请输入股票代码", "err"); return; }
+  const btn = $("stock-add-btn");
+  btn.disabled = true;
+  btn.textContent = "校验中…";
+  try {
+    const lk = await apiGet(`/api/stock_lookup?code=${encodeURIComponent(code)}`);
+    if (lk.error) { toast(lk.error, "err"); return; }
+    const name = $("stock-name-input").value.trim() || lk.name;
+    const j = await api("/api/stocks", { action: "add", code: lk.code, name });
+    if (j.error) { toast(j.error, "err"); return; }
+    state.stocks = j.stocks || [];
+    $("stock-code-input").value = "";
+    $("stock-name-input").value = "";
+    renderStockList();
+    toast(`已添加 ${lk.name} ✓`, "ok");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "校验并添加";
+  }
+}
+
 /* ─────────── AI 生成对话框 ─────────── */
 const aiGen = { kind: "pre", script: "" };
 
@@ -2692,6 +2796,20 @@ function bindEvents() {
   $("theme-menu").addEventListener("click", (e) => e.stopPropagation());
   document.addEventListener("click", () => $("theme-menu").classList.remove("open"));
   $("nav-ai").addEventListener("click", openAiModal);
+  $("nav-stocks").addEventListener("click", openStocksModal);
+  $("stock-add-btn").addEventListener("click", addStock);
+  // 代码框回车：先联网校验补全名称；名称已有则直接添加
+  $("stock-code-input").addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter") return;
+    const code = e.target.value.trim();
+    if (!code) return;
+    const lk = await apiGet(`/api/stock_lookup?code=${encodeURIComponent(code)}`);
+    if (lk.error) { toast(lk.error, "err"); return; }
+    if (!$("stock-name-input").value.trim()) $("stock-name-input").value = lk.name;
+  });
+  $("stock-name-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addStock();
+  });
   $("ai-preset").addEventListener("change", applyAiPreset);
   $("ai-save").addEventListener("click", saveAiConfig);
   $("ai-pre-fab").addEventListener("click", () => openAiGenModal("pre"));
@@ -2837,6 +2955,11 @@ async function init() {
     state.saved = j.saved || { groups: [] };
     state.ssh = j.ssh || {};
     state.ai = j.ai || {};
+    state.stocks = j.stocks || [{ code: "sh000001", name: "上证指数" }];
+    try {
+      const sc = localStorage.getItem("cg-stock");
+      if (sc && state.stocks.some((s) => s.code === sc)) state.stockCode = sc;
+    } catch (e) { /* 忽略 */ }
     state.ssh_ready = !!j.ssh_ready;
     if (j.logo) $("brand-logo").src = j.logo;
     renderEnvSelect();
