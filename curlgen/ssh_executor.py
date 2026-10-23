@@ -382,7 +382,7 @@ class GateShellSession:
                 delta = body[emitted:]
                 emitted = len(body)
                 if delta.strip():
-                    # 与 main_window 的 on_progress 约定一致：tag/text 两个参数
+                    # on_log 回调约定：tag/text 两个参数
                     if self.on_log:
                         self.on_log("stdout", delta)
 

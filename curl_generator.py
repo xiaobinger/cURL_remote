@@ -1,23 +1,20 @@
 """
 Curl Generator - 现代化 cURL 命令生成工具
-支持签名密钥配置、亮暗主题切换、签名别名管理、快捷请求、本地/SSH 执行
+支持签名密钥配置、主题切换、签名别名管理、快捷请求、本地/SSH 执行
 
 模块结构:
     curlgen/
-        theme.py          主题配色
         config.py         路径常量与 JSON 持久化
         logging_setup.py  按天滚动日志
         signing.py        签名计算
-        widgets.py        通用 UI 组件（高亮、下拉、键值编辑器）
         ssh_executor.py   本地/SSH 执行器（流式输出、超时、可停止）
-        dialogs.py        对话框（环境配置/SSH 配置/保存请求）
-        saved_panel.py    左侧快捷请求面板
-        main_window.py    旧版主窗口（PyQt 原生界面）
-        web_ui.py         新版主窗口（星轨控制台，Web 引擎界面）
-        curl_builder.py   cURL 命令构建（新旧 UI 共用）
+        http_executor.py  本地直发 HTTP 执行器
+        ai_client.py      AI 脚本生成（OpenAI 兼容协议）
+        code_gen.py       多语言调用代码生成
+        web_ui.py         主窗口（星轨控制台，Web 引擎界面）
+        curl_builder.py   cURL 命令构建与结构化请求解析
 
-启动参数:
-    --legacy   强制使用旧版 PyQt 界面（新版需要 PyQtWebEngine）
+运行依赖：PyQt5 + PyQtWebEngine（界面由 Web 引擎渲染）
 """
 import sys
 
@@ -27,30 +24,23 @@ from curlgen.logging_setup import setup_logging
 def main():
     setup_logging()
 
+    try:
+        import PyQt5.QtWebEngineWidgets  # noqa: F401
+    except ImportError:
+        print("缺少 PyQtWebEngine，无法启动界面：pip install PyQtWebEngine")
+        sys.exit(1)
+
     from PyQt5.QtCore import Qt
     from PyQt5.QtWidgets import QApplication
 
-    # 允许运行时按需加载 QtWebEngine（新旧界面切换）
+    # 允许运行时加载 QtWebEngine
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    force_legacy = "--legacy" in sys.argv
-    use_web = False
-    if not force_legacy:
-        try:
-            import PyQt5.QtWebEngineWidgets  # noqa: F401
-            use_web = True
-        except ImportError:
-            print("未安装 PyQtWebEngine，使用旧版界面（pip install PyQtWebEngine 可启用新版）")
-
-    if use_web:
-        from curlgen.web_ui import WebCurlGenerator
-        window = WebCurlGenerator()
-    else:
-        from curlgen.main_window import CurlGenerator
-        window = CurlGenerator()
+    from curlgen.web_ui import WebCurlGenerator
+    window = WebCurlGenerator()
     window.show()
     sys.exit(app.exec_())
 

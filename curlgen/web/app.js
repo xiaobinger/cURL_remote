@@ -2221,8 +2221,6 @@ async function pollEvents() {
         el.textContent = `${ev.is_target === "target" ? "目标机" : "跳板机"}: ${ev.msg}`;
         el.className = `ssh-test-status ${ev.ok ? "ok" : "err"}`;
       }
-    } else if (ev.type === "legacy") {
-      document.body.innerHTML = '<div style="display:flex;height:100%;align-items:center;justify-content:center;color:#8b9ab5;font-family:sans-serif">正在切换回旧版界面…</div>';
     }
   }
   state.eventCursor = j.next;
@@ -2392,9 +2390,6 @@ function bindEvents() {
   });
   $("theme-menu").addEventListener("click", (e) => e.stopPropagation());
   document.addEventListener("click", () => $("theme-menu").classList.remove("open"));
-  $("nav-legacy").addEventListener("click", async () => {
-    await api("/api/switch_legacy");
-  });
   $("nav-ai").addEventListener("click", openAiModal);
   $("ai-preset").addEventListener("change", applyAiPreset);
   $("ai-save").addEventListener("click", saveAiConfig);

@@ -33,7 +33,7 @@
   - [环境变量引用 `{{ref}}`](#1-环境变量引用-ref)
   - [签名计算](#2-签名计算javajava-兼容)
   - [GateShell 堡垒机远程执行](#3-gateshell-堡垒机远程执行)
-  - [双 UI 与本地 API 服务](#4-双-ui-与本地-api-服务)
+  - [本地 API 服务](#4-本地-api-服务)
 - [本地 HTTP API 一览](#-本地-http-api-一览)
 - [配置持久化](#-配置持久化)
 - [快捷键](#-快捷键)
@@ -108,7 +108,6 @@
 <td width="50%" valign="top">
 
 ### 🎨 体验与工程
-- **双 UI 引擎**：星轨控制台（Web）+ 经典 PyQt，随时互切
 - **7 套主题**：深空蓝 / 晨雾白 / 曜石黑 / 暗夜紫 / 墨绿森林 / 经典QQ / 阳光橙，菜单选择并持久记忆
 - 快捷请求分组、历史记录、一键复制
 - **多标签页**（Postman 式）：每个请求一个标签，脏标记 ●，互不惊扰；**Ctrl+S 覆盖保存**；关闭未保存标签时提醒「保存并关闭 / 直接关闭」
@@ -143,7 +142,7 @@
 │ 🌐 环境管理   │ [Headers][Params][Body][Auth] │  cURL 预览（实时生成）     │
 │ 🖧 SSH 设置   │ ┌───────────────────────────┐ │  curl -X POST \           │
 │ 🌓 切换主题   │ │ key        │ value        │ │    -H "Content-Type:..."  │
-│ ↩ 返回旧版   │ │ X-Sign     │ {{appKey}}   │ │    -d '{...}'  [🖧SSH请求]│
+│ 🤖 AI 设置   │ │ X-Sign     │ {{appKey}}   │ │    -d '{...}'  [🖧SSH请求]│
 │              │ └───────────────────────────┘ │                          │
 │ 快捷请求 ▸    ├───────────────────────────────┴──────────────────────────┤
 │  · 商户余额   │ [响应] [代码预览] [Console]              200 OK 0.24s    │
@@ -155,8 +154,6 @@
 
 > 左侧导航四大区块：**请求构建 / 环境管理 / SSH 设置 / 切换主题**，底部常驻 **快捷请求** 与 **历史记录**，以及实时 **连接状态徽标**。
 
-**旧版 · 经典 PyQt 原生界面** —— 通过 `--legacy` 或菜单栏一键切回，零 WebEngine 依赖。
-
 ---
 
 ## 🏛 架构总览
@@ -165,48 +162,34 @@
 flowchart TB
     subgraph Entry["入口 curl_generator.py"]
         A["QApplication + Fusion 样式"]
-        B{"能否 import<br/>QtWebEngineWidgets?"}
-        C["--legacy ?"]
     end
 
-    subgraph WebUI["新版 · curlgen/web_ui.py"]
+    subgraph WebUI["界面 · curlgen/web_ui.py"]
         W1["QWebEngineView 渲染<br/>curlgen/web/ (HTML/CSS/JS)"]
         W2["ThreadingHTTPServer<br/>127.0.0.1:随机端口"]
         W3["事件流 /api/events<br/>执行输出回推"]
     end
 
-    subgraph Legacy["旧版 · curlgen/main_window.py"]
-        L1["纯 PyQt5 控件界面"]
-    end
-
-    subgraph Shared["共享核心"]
+    subgraph Shared["核心逻辑"]
         S1["curl_builder.py 命令构建"]
         S2["signing.py / sign_utils.py 签名"]
         S3["ssh_executor.py 本地 & 堡垒机执行"]
         S4["config.py 配置持久化 ~/.cURL"]
-        S5["theme.py 设计令牌 / QSS"]
     end
 
-    A --> C
-    C -->|是| L1
-    C -->|否| B
-    B -->|是| WebUI
-    B -->|否| L1
+    A --> WebUI
     W1 <-->|fetch JSON| W2
     W2 --> S1
-    L1 --> S1
     S1 --> S2
     WebUI --> S3
-    L1 --> S3
     S1 --> S4
     S3 --> S4
 ```
 
 **设计原则：**
 
-- **核心与界面解耦**：命令构建、签名、执行三大逻辑都在纯 Python 模块里，双 UI 共用同一份实现，行为绝对一致。
-- **新版 UI 走 Web 化路线**：把界面交给浏览器引擎，获得远超传统 Qt 控件的动效与排版自由度；Python 端只做数据与执行，通过本地 HTTP + 事件流通信。
-- **降级友好**：没装 PyQtWebEngine 自动退回旧版；偏好原生界面用 `--legacy` 强制切换。
+- **核心与界面解耦**：命令构建、签名、执行三大逻辑都在纯 Python 模块里，与界面完全分离，可独立测试。
+- **UI 走 Web 化路线**：把界面交给浏览器引擎，获得远超传统 Qt 控件的动效与排版自由度；Python 端只做数据与执行，通过本地 HTTP + 事件流通信。
 
 ---
 
@@ -218,7 +201,7 @@ flowchart TB
 | --- | --- | --- |
 | Python | 3.8+ | 建议 3.10 ~ 3.11 |
 | PyQt5 | 5.15+ | GUI 基础（必装） |
-| PyQtWebEngine | 5.15+ | 新版星轨控制台（选装，缺失自动降级） |
+| PyQtWebEngine | 5.15+ | 星轨控制台渲染引擎（必装） |
 | paramiko | 2.x / 3.x | SSH 堡垒机远程执行（选装） |
 | pyinstaller | 5+ | 仅打包时需要 |
 
@@ -228,16 +211,10 @@ flowchart TB
 pip install PyQt5 PyQtWebEngine paramiko
 ```
 
-> 仅想用经典界面：`pip install PyQt5` 即可（不装 PyQtWebEngine 会自动使用旧版 UI）。
-
 ### 源码运行
 
 ```bash
-# 默认：优先新版星轨控制台
 python curl_generator.py
-
-# 强制经典 PyQt 界面
-python curl_generator.py --legacy
 ```
 
 ### 直接使用发行版
@@ -250,7 +227,7 @@ python curl_generator.py --legacy
 
 ```text
 buildCurl/
-├── curl_generator.py          # 🚪 程序入口（启动参数 --legacy）
+├── curl_generator.py          # 🚪 程序入口
 ├── CurlGenerator.spec         # 📦 PyInstaller 打包配置
 ├── logo.png                   # 🎨 应用图标 / 品牌标识
 ├── README.md                  # 📖 本文档
@@ -258,20 +235,15 @@ buildCurl/
 │   └── CurlGenerator.exe      # 🎁 打包成品（单文件）
 └── curlgen/                   # 🧩 核心包（__version__ = 2.0.0）
     ├── __init__.py            # 版本号
-    ├── theme.py               # 🎨 设计令牌 & 全局 QSS（深空座舱 / 晨雾）
     ├── config.py              # 💾 路径常量 & JSON 持久化（~/.cURL）
     ├── logging_setup.py       # 📝 按天滚动日志（保留 30 天）
     ├── signing.py             # 🔐 签名入口（MD5 / SHA256）
     ├── sign_utils.py          # 🔐 Java 风格排序 / SHA256 实现
-    ├── curl_builder.py        # 🏗 cURL 命令构建（新旧 UI 共用）
+    ├── curl_builder.py        # 🏗 cURL 命令构建与结构化请求解析
     ├── code_gen.py            # 🧬 多语言代码生成（Python/JS/Java/Go/Rust 等 10 种）
     ├── http_executor.py       # ⚡ 本地直发 HTTP（urllib，自动跟随重定向）
     ├── ssh_executor.py        # 🖧 GateShell 堡垒机远程执行
-    ├── widgets.py             # 🧱 通用组件（语法高亮 / 下拉 / 键值编辑器）
-    ├── saved_panel.py         # ⭐ 快捷请求面板
-    ├── dialogs.py             # 🪟 对话框（环境 / SSH / 保存请求）
-    ├── main_window.py         # 🖥 旧版主窗口（经典 PyQt）
-    ├── web_ui.py              # 🌌 新版主窗口（星轨控制台 + 本地 API）
+    ├── web_ui.py              # 🌌 主窗口（星轨控制台 + 本地 API）
     └── web/                   # 🌐 前端资源（运行时内联进 HTML）
         ├── index.html         # 结构骨架
         ├── app.css            # 样式（深/浅双主题令牌）
@@ -360,9 +332,9 @@ sorted(key1=value1&key2=value2&...) + "key={secret}"
 - **连接测试**：可只测堡垒机登录，也可延伸到目标机执行 `hostname` 验证。
 - **可停止 / 超时**：`stop_event` 贯穿读写，硬超时上限 120s。
 
-### 4. 双 UI 与本地 API 服务
+### 4. 本地 API 服务
 
-新版星轨控制台采用 **"Web 前端 + 本地 API"** 架构：
+星轨控制台采用 **"Web 前端 + 本地 API"** 架构：
 
 - Python 端启动 `ThreadingHTTPServer` 于 `127.0.0.1` **随机端口**，只监听本机，天然安全。
 - 页面通过 `window.API_BASE` 与后端通信，执行输出经 **`/api/events` 事件流** 增量拉取刷新。
@@ -370,7 +342,7 @@ sorted(key1=value1&key2=value2&...) + "key={secret}"
 
 > ⚠️ **改前端后需重启应用**：`app.css` / `app.js` / `index.html` 的改动在下次启动时才会被内联生效。
 
-**旧版兼容注意**：内置 QtWebEngine 的 Chromium 版本较老，前端 **避免使用 `inset` 简写、`color-mix()`** 等新特性（代码中已用兼容写法替代）。
+**前端兼容注意**：内置 QtWebEngine 的 Chromium 版本较老，前端 **避免使用 `inset` 简写、`color-mix()`** 等新特性（代码中已用兼容写法替代）。
 
 ---
 
@@ -395,7 +367,6 @@ sorted(key1=value1&key2=value2&...) + "key={secret}"
 | `POST` | `/api/save_envs` | 保存环境配置 |
 | `POST` | `/api/save_ssh` | 保存 SSH 配置 |
 | `POST` | `/api/test_ssh` | 触发连接测试（异步，结果走事件流） |
-| `POST` | `/api/switch_legacy` | 切回旧版界面 |
 
 ---
 
@@ -464,9 +435,9 @@ pyinstaller CurlGenerator.spec
 ## ❓ 常见问题 FAQ
 
 <details>
-<summary><b>启动后是旧版界面，怎么用新版？</b></summary>
+<summary><b>启动提示缺少 PyQtWebEngine？</b></summary>
 
-新版需要 PyQtWebEngine，请安装：`pip install PyQtWebEngine`。若已安装仍为旧版，检查是否有 `--legacy` 参数，或从菜单栏「视图 → 切换到新版界面」。
+界面由 QtWebEngine 渲染，请安装：`pip install PyQtWebEngine`。使用打包好的 `dist/CurlGenerator.exe` 则无此问题。
 </details>
 
 <details>

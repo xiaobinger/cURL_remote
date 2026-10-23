@@ -1,10 +1,9 @@
-"""新版 UI：星轨控制台（Web 引擎驱动）
+"""星轨控制台（Web 引擎驱动）
 
 架构：
   QWebEngineView 渲染 curlgen/web/ 下的 HTML/CSS/JS 前端，
   Python 端起本地 HTTP API 服务（127.0.0.1 随机端口）提供数据与执行能力，
   页面通过 window.API_BASE 与后端通信；执行输出经 /api/events 事件流推送。
-旧版 PyQt UI（main_window.py）保持不变，菜单栏可互相切换。
 """
 import json
 import logging
@@ -15,7 +14,7 @@ import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl
+from PyQt5.QtCore import QUrl
 from PyQt5.QtGui import QColor, QIcon
 from PyQt5.QtWidgets import QMainWindow
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
@@ -171,9 +170,6 @@ class _ApiHandler(BaseHTTPRequestHandler):
                     self._send_json({"error": str(e)})
                     return
                 self._send_json({"ok": True, "script": script})
-            elif path == "/api/switch_legacy":
-                self.app.sig_switch_legacy.emit()
-                self._send_json({"ok": True})
             else:
                 self._send_json({"error": "not found"}, 404)
         except Exception as e:
@@ -303,7 +299,6 @@ class _ApiHandler(BaseHTTPRequestHandler):
 
 class WebCurlGenerator(QMainWindow):
     """星轨控制台主窗口：WebEngine + 本地 API"""
-    sig_switch_legacy = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -337,7 +332,6 @@ class WebCurlGenerator(QMainWindow):
         page.setBackgroundColor(QColor("#070b16"))
         self.view.setPage(page)
         self.setCentralWidget(self.view)
-        self._build_menubar()
 
         html_path = os.path.join(WEB_DIR, "index.html")
         with open(html_path, "r", encoding="utf-8") as f:
@@ -354,25 +348,6 @@ class WebCurlGenerator(QMainWindow):
         html = html.replace('<script src="app.js"></script>', f"<script>\n{js}\n</script>")
         html = html.replace("__PORT__", str(self.port))
         self.view.page().setHtml(html, QUrl.fromLocalFile(WEB_DIR.replace("\\", "/") + "/"))
-
-        self.sig_switch_legacy.connect(self._open_legacy)
-
-    # ──────────────────── 菜单栏 ────────────────────
-    def _build_menubar(self):
-        menubar = self.menuBar()
-
-        view_menu = menubar.addMenu("  视图  ")
-
-        legacy_action = view_menu.addAction("↩ 返回旧版界面")
-        legacy_action.triggered.connect(self._open_legacy)
-
-        view_menu.addSeparator()
-
-        reload_action = view_menu.addAction("⟳ 刷新页面")
-        reload_action.triggered.connect(self.view.reload)
-
-        exit_action = view_menu.addAction("✕ 退出")
-        exit_action.triggered.connect(self.close)
 
     def _on_console(self, level, message, line, source):
         logger.debug("web console [%s:%d] %s", os.path.basename(source or ""), line, message)
@@ -551,17 +526,7 @@ class WebCurlGenerator(QMainWindow):
             })
         threading.Thread(target=worker, daemon=True, name="curlgen-sshtest").start()
 
-    # ──────────────────── 切换 / 关闭 ────────────────────
-    def _open_legacy(self):
-        if getattr(self, "_legacy_opened", False):
-            return
-        self._legacy_opened = True
-        from .main_window import CurlGenerator
-        logger.info("切换回旧版界面")
-        self._legacy_win = CurlGenerator()
-        self._legacy_win.show()
-        self.close()
-
+    # ──────────────────── 关闭 ────────────────────
     def closeEvent(self, event):
         if getattr(self, "_server_closed", False):
             super().closeEvent(event)
