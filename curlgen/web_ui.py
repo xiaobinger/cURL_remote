@@ -429,7 +429,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
 
     def _astock_month_kline(self):
         """整月日 K：双源自愈；当月会额外把腾讯日 K 缺失的「今日形成中蜡烛」用实时行情补上。
-        返回 {"days": [{date, open, close, high, low, vol}]}，非交易月（未来月等）days 为空。"""
+        返回 {"days": [...], "prev_closes": [...]}；prev_closes 为月前约 40 个交易日的收盘价
+        （供前端计算 MA20 均线起点），非交易月（未来月等）days 为空。"""
         import datetime
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
         params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
@@ -442,7 +443,11 @@ class _ApiHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "invalid code"}, 400)
             return
         try:
-            days = _fetch_kline_days(f"{month}-01", f"{month}-31", code)
+            m0 = datetime.date.fromisoformat(f"{month}-01")
+            ext_start = (m0 - datetime.timedelta(days=60)).isoformat()
+            all_days = _fetch_kline_days(ext_start, f"{month}-31", code)
+            prev_closes = [d["close"] for d in all_days if d["date"] < f"{month}-01"]
+            days = [d for d in all_days if d["date"] >= f"{month}-01"]
             today = datetime.date.today().isoformat()
             if month == today[:7]:
                 live = self._astock_live(today, code)
@@ -456,7 +461,7 @@ class _ApiHandler(BaseHTTPRequestHandler):
                         days[-1] = candle
                     else:
                         days.append(candle)
-            self._send_json({"days": days})
+            self._send_json({"days": days, "prev_closes": prev_closes})
         except Exception as e:
             logger.info("A股月K获取失败 %s %s: %s", code, month, e)
             self._send_json({"error": str(e)})

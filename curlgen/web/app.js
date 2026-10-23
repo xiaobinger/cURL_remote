@@ -1666,6 +1666,23 @@ async function loadAstock() {
   renderAstock();
 }
 
+/* 标的切换下拉（行情条 / K线头部共用） */
+function openStockMenu(x, y) {
+  const items = (state.stocks || []).map((s) => [
+    (s.code === state.stockCode ? "✓ " : "　") + `${s.name}（${s.code}）`,
+    () => switchStock(s.code),
+  ]);
+  showCtxMenu(x, y, items);
+}
+
+function bindStockSwitch(el) {
+  if (!el) return;
+  el.addEventListener("click", (e) => {
+    e.stopPropagation(); // 阻止冒泡到 document 级 click（会把刚弹出的菜单关掉）
+    openStockMenu(e.clientX, e.clientY);
+  });
+}
+
 function renderAstock() {
   const box = $("cal-stock");
   if (!box) return;
@@ -1675,18 +1692,12 @@ function renderAstock() {
   const sign = up ? "+" : "";
   const priceLabel = j.live ? "实时" : "收";
   box.innerHTML =
-    `<span class="stock-name" id="stock-switch" title="点击切换标的">${escapeHtml(curStock().name)} <i>▾</i></span>` +
+    `<span class="stock-name stock-switch" id="stock-switch" title="点击切换标的">${escapeHtml(curStock().name)} <i>▾</i></span>` +
     `<span class="stock-item">开 <b>${j.open.toFixed(2)}</b></span>` +
     `<span class="stock-item">${priceLabel} <b class="${up ? "stock-up" : "stock-down"}">${j.close.toFixed(2)}</b></span>` +
     `<span class="stock-pct ${up ? "stock-up" : "stock-down"}">${sign}${j.pct.toFixed(2)}%</span>`;
   box.classList.remove("hidden");
-  $("stock-switch").addEventListener("click", (e) => {
-    const items = (state.stocks || []).map((s) => [
-      (s.code === state.stockCode ? "✓ " : "　") + `${s.name}（${s.code}）`,
-      () => switchStock(s.code),
-    ]);
-    showCtxMenu(e.clientX, e.clientY, items);
-  });
+  bindStockSwitch($("stock-switch"));
 }
 
 /* 切换行情标的：持久化选择，刷新行情条与 K 线 */
@@ -1711,21 +1722,40 @@ async function loadKline() {
   const j = await apiGet(`/api/astock_kline?month=${mk.split("|")[1]}&code=${code}`);
   if (dash.klineMonth !== mk) return; // 等待期间用户又切了月份/标的
   if (j && j.days && j.days.length) {
-    dash.kline[mk] = j.days;
+    dash.kline[mk] = { days: j.days, prev: j.prev_closes || [] };
   } else {
     delete dash.kline[mk];
   }
   renderKline();
 }
 
+/* 简单移动平均：closes 为收盘价序列，不足 n 日返回 "-"（ECharts 断点） */
+function calcMA(n, closes) {
+  const out = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (i < n - 1) { out.push("-"); continue; }
+    let s = 0;
+    for (let k = i - n + 1; k <= i; k++) s += closes[k];
+    out.push(+(s / n).toFixed(2));
+  }
+  return out;
+}
+
 function renderKline() {
   const box = $("cal-kline");
+  const head = $("cal-kline-head");
   if (!box || typeof echarts === "undefined") return;
-  const days = dash.kline[dash.klineMonth];
+  const pack = dash.kline[dash.klineMonth];
+  const days = pack && pack.days;
   if (!days || !days.length) {
     box.classList.add("hidden");
+    if (head) head.classList.add("hidden");
     if (dash.klineChart) { dash.klineChart.dispose(); dash.klineChart = null; }
     return;
+  }
+  if (head) {
+    head.classList.remove("hidden");
+    $("kline-stock-switch").textContent = `${curStock().name} ▾`;
   }
   const css = getComputedStyle(document.documentElement);
   const RED = css.getPropertyValue("--red").trim() || "#f4506c";
@@ -1733,6 +1763,8 @@ function renderKline() {
   const TEXT3 = css.getPropertyValue("--text-3").trim() || "#7c8aa0";
   const BORDER = css.getPropertyValue("--border-soft").trim() || "#333";
   const ACCENT = css.getPropertyValue("--accent").trim() || "#5b9dff";
+  // 均线配色（同花顺惯例）：MA5 白、MA10 黄、MA20 紫
+  const MA_COLORS = { MA5: "#e6e9f0", MA10: "#f5c242", MA20: "#b678f0" };
   const pad = (n) => String(n).padStart(2, "0");
   const selKey = dash.sel ? `${dash.sel.y}-${pad(dash.sel.m)}-${pad(dash.sel.d)}` : "";
 
@@ -1749,6 +1781,11 @@ function renderKline() {
     value: d.vol,
     itemStyle: { color: d.close >= d.open ? RED : GREEN },
   }));
+  // 均线：拼接月前收盘价算起点，再裁掉前段与显示对齐
+  const prev = pack.prev || [];
+  const allCloses = prev.concat(days.map((d) => d.close));
+  const mas = {};
+  for (const n of [5, 10, 20]) mas["MA" + n] = calcMA(n, allCloses).slice(prev.length);
 
   box.classList.remove("hidden");
   if (!dash.klineChart) dash.klineChart = echarts.init(box);
@@ -1770,7 +1807,13 @@ function renderKline() {
         if (!d) return "";
         const pctCls = d.close >= d.open ? RED : GREEN;
         const vol = d.vol >= 1e8 ? (d.vol / 1e8).toFixed(2) + " 亿手" : (d.vol / 1e4).toFixed(0) + " 万手";
-        return `<b>${d.date}</b><br>开 ${d.open.toFixed(2)}　收 <span style="color:${pctCls}">${d.close.toFixed(2)}</span><br>高 ${d.high.toFixed(2)}　低 ${d.low.toFixed(2)}<br>量 ${vol}`;
+        let html = `<b>${d.date}</b><br>开 ${d.open.toFixed(2)}　收 <span style="color:${pctCls}">${d.close.toFixed(2)}</span><br>高 ${d.high.toFixed(2)}　低 ${d.low.toFixed(2)}<br>量 ${vol}`;
+        for (const p of ps) {
+          if (p.seriesName && p.seriesName.startsWith("MA") && p.value !== "-" && p.value != null) {
+            html += `<br><span style="color:${MA_COLORS[p.seriesName]}">${p.seriesName}</span> ${(+p.value).toFixed(2)}`;
+          }
+        }
+        return html;
       },
     },
     axisPointer: { link: [{ xAxisIndex: "all" }] },
@@ -1797,6 +1840,12 @@ function renderKline() {
     series: [
       { name: "日K", type: "candlestick", data: kdata, xAxisIndex: 0, yAxisIndex: 0,
         itemStyle: { color: RED, color0: GREEN, borderColor: RED, borderColor0: GREEN } },
+      ...[5, 10, 20].map((n) => ({
+        name: "MA" + n, type: "line", data: mas["MA" + n], xAxisIndex: 0, yAxisIndex: 0,
+        smooth: true, showSymbol: false, z: 3,
+        lineStyle: { width: 1, color: MA_COLORS["MA" + n] },
+        emphasis: { disabled: true },
+      })),
       { name: "成交量", type: "bar", data: vdata, xAxisIndex: 1, yAxisIndex: 1, barWidth: "60%" },
     ],
   }, true);
@@ -1804,7 +1853,9 @@ function renderKline() {
   if (!chart._klineClickBound) {
     chart._klineClickBound = true;
     chart.on("click", (p) => {
-      const d = days[p.dataIndex];
+      // 从当前缓存取数据（图表实例复用，闭包里的 days 可能已过期）
+      const cur = dash.kline[dash.klineMonth];
+      const d = cur && cur.days && cur.days[p.dataIndex];
       if (!d) return;
       const [y, m, dd] = d.date.split("-").map(Number);
       dash.sel = { y, m, d: dd };
@@ -2461,14 +2512,14 @@ function renderStockList() {
     const info = document.createElement("span");
     info.className = "stock-row-info";
     info.innerHTML = `<b>${escapeHtml(s.name)}</b><span class="stock-row-code">${escapeHtml(s.code)}</span>` +
-      (cur ? '<span class="stock-row-cur">当前</span>' : "");
+      (cur ? '<span class="stock-row-cur">默认</span>' : "");
     const ops = document.createElement("span");
     ops.className = "stock-row-ops";
     if (!cur) {
       const use = document.createElement("button");
       use.className = "btn btn-mini";
-      use.textContent = "切换";
-      use.title = "设为当前行情标的";
+      use.textContent = "设为默认";
+      use.title = "设为仪表盘默认展示标的";
       use.addEventListener("click", () => { switchStock(s.code); renderStockList(); });
       ops.appendChild(use);
     }
@@ -2797,6 +2848,7 @@ function bindEvents() {
   document.addEventListener("click", () => $("theme-menu").classList.remove("open"));
   $("nav-ai").addEventListener("click", openAiModal);
   $("nav-stocks").addEventListener("click", openStocksModal);
+  bindStockSwitch($("kline-stock-switch"));
   $("stock-add-btn").addEventListener("click", addStock);
   // 代码框回车：先联网校验补全名称；名称已有则直接添加
   $("stock-code-input").addEventListener("keydown", async (e) => {

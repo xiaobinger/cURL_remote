@@ -1384,9 +1384,10 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 }
 .cal-stock.hidden { display: none; }
 .stock-name { font-weight: 700; color: var(--text-3); }
-.stock-name[id="stock-switch"] { cursor: pointer; padding: 1px 4px; border-radius: 4px; transition: background .15s; }
-.stock-name[id="stock-switch"]:hover { background: var(--bg-input); color: var(--text-1); }
-.stock-name[id="stock-switch"] i { font-style: normal; font-size: 9px; opacity: .7; }
+.stock-name.stock-switch { cursor: pointer; padding: 1px 4px; border-radius: 4px; transition: background .15s; }
+.stock-name.stock-switch:hover { background: var(--bg-input); color: var(--text-1); }
+.stock-name.stock-switch i, .stock-name.stock-switch { font-style: normal; }
+.stock-name.stock-switch i { font-size: 9px; opacity: .7; }
 .stock-item b { font-family: var(--font-mono); font-weight: 600; }
 .stock-pct { font: 700 11px var(--font-mono); margin-left: auto; }
 .stock-up { color: var(--red); }
@@ -1412,8 +1413,15 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 .stock-row-cur { font: 10px var(--font-ui); color: var(--accent); }
 .stock-row-ops { display: flex; gap: 6px; }
 /* 上证指数月 K 线图 */
-.cal-kline { margin-top: 6px; height: 230px; width: 100%; }
+.cal-kline { margin-top: 2px; height: 230px; width: 100%; }
 .cal-kline.hidden { display: none; }
+.cal-kline-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 8px; padding: 2px 2px 0;
+  font: 11px var(--font-ui);
+}
+.cal-kline-head.hidden { display: none; }
+.kline-head-hint { font-size: 10px; color: var(--text-3); opacity: .8; }
 .cal-d { font: 600 13px var(--font-mono); color: var(--text-1); }
 .cal-l {
   font: 10px var(--font-ui); color: var(--text-3);
