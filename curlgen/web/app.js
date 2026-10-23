@@ -1705,6 +1705,7 @@ function switchStock(code) {
   if (code === state.stockCode) return;
   state.stockCode = code;
   try { localStorage.setItem("cg-stock", code); } catch (e) { /* 忽略 */ }
+  api("/api/ui_prefs", { stock: code }); // 文件持久化默认标的
   loadAstock();
   loadKline();
 }
@@ -1753,10 +1754,7 @@ function renderKline() {
     if (dash.klineChart) { dash.klineChart.dispose(); dash.klineChart = null; }
     return;
   }
-  if (head) {
-    head.classList.remove("hidden");
-    $("kline-stock-switch").textContent = `${curStock().name} ▾`;
-  }
+  if (head) head.classList.remove("hidden");
   const css = getComputedStyle(document.documentElement);
   const RED = css.getPropertyValue("--red").trim() || "#f4506c";
   const GREEN = css.getPropertyValue("--green").trim() || "#2dd4a0";
@@ -2848,7 +2846,6 @@ function bindEvents() {
   document.addEventListener("click", () => $("theme-menu").classList.remove("open"));
   $("nav-ai").addEventListener("click", openAiModal);
   $("nav-stocks").addEventListener("click", openStocksModal);
-  bindStockSwitch($("kline-stock-switch"));
   $("stock-add-btn").addEventListener("click", addStock);
   // 代码框回车：先联网校验补全名称；名称已有则直接添加
   $("stock-code-input").addEventListener("keydown", async (e) => {
@@ -2967,7 +2964,10 @@ const THEMES = [
 ];
 function applyTheme(id, persist = true) {
   document.documentElement.dataset.theme = id;
-  if (persist) { try { localStorage.setItem("cg-theme", id); } catch (e) { /* 忽略 */ } }
+  if (persist) {
+    try { localStorage.setItem("cg-theme", id); } catch (e) { /* 忽略 */ }
+    api("/api/ui_prefs", { theme: id }); // 文件持久化（WebEngine localStorage 重启可能丢失）
+  }
   document.querySelectorAll("#theme-menu button").forEach((b) =>
     b.classList.toggle("active", b.dataset.themeId === id));
 }
@@ -3008,10 +3008,13 @@ async function init() {
     state.ssh = j.ssh || {};
     state.ai = j.ai || {};
     state.stocks = j.stocks || [{ code: "sh000001", name: "上证指数" }];
-    try {
-      const sc = localStorage.getItem("cg-stock");
-      if (sc && state.stocks.some((s) => s.code === sc)) state.stockCode = sc;
-    } catch (e) { /* 忽略 */ }
+    // UI 偏好以文件为准（WebEngine localStorage 重启可能丢失，仅作启动初期的临时来源）
+    const ui = j.ui || {};
+    if (ui.theme && THEMES.some((t) => t.id === ui.theme) && ui.theme !== document.documentElement.dataset.theme) {
+      applyTheme(ui.theme, false);
+    }
+    const prefStock = ui.stock || (() => { try { return localStorage.getItem("cg-stock"); } catch (e) { return null; } })();
+    if (prefStock && state.stocks.some((s) => s.code === prefStock)) state.stockCode = prefStock;
     state.ssh_ready = !!j.ssh_ready;
     if (j.logo) $("brand-logo").src = j.logo;
     renderEnvSelect();

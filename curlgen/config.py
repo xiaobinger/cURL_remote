@@ -25,6 +25,7 @@ SAVED_REQUESTS_FILE = os.path.join(CONFIG_DIR, "saved_requests.json")
 SIGN_CONFIG_FILE = os.path.join(CONFIG_DIR, "sign_configs.json")
 TODO_FILE = os.path.join(CONFIG_DIR, "todos.json")
 STOCKS_FILE = os.path.join(CONFIG_DIR, "stocks.json")
+UI_PREFS_FILE = os.path.join(CONFIG_DIR, "ui_prefs.json")
 LOG_DIR = os.path.join(CONFIG_DIR, "logs")
 
 
@@ -138,6 +139,29 @@ def save_stocks(data):
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error("保存自选股失败: %s", e)
+        raise
+
+
+# ──────────────────────────── UI 偏好（主题 / 默认行情标的） ────────────────────────────
+def load_ui_prefs():
+    """{"theme": "dark", "stock": "sh000001"}；WebEngine 的 localStorage 不保证持久化，走文件"""
+    if os.path.exists(UI_PREFS_FILE):
+        try:
+            with open(UI_PREFS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception as e:
+            logger.error("加载 UI 偏好失败: %s", e)
+    return {}
+
+
+def save_ui_prefs(data):
+    try:
+        with open(UI_PREFS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error("保存 UI 偏好失败: %s", e)
         raise
 
 

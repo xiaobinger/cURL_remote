@@ -25,6 +25,7 @@ from .config import (
     load_saved_requests, save_saved_requests,
     load_todos, save_todos,
     load_stocks, save_stocks,
+    load_ui_prefs, save_ui_prefs,
     normalize_ssh_config, load_ssh_targets,
     resolve_ssh_cfg, env_ssh_target_alias,
 )
@@ -38,6 +39,9 @@ from .ssh_executor import (
 )
 
 logger = logging.getLogger("curlgen.web_ui")
+
+# /api/ui_prefs 读-改-写串行化（ThreadingHTTPServer 并发请求会丢更新）
+_UI_PREFS_LOCK = threading.Lock()
 
 # SSH 远程 curl -w 尾注标记（解析后不展示在输出区）
 SSH_META_MARK = "__CG_META__"
@@ -229,6 +233,7 @@ class _ApiHandler(BaseHTTPRequestHandler):
                     "ssh_ready": ssh_ready,
                     "ai": load_ai_config(),
                     "stocks": load_stocks(),
+                    "ui": load_ui_prefs(),
                 })
             elif path == "/api/envs":
                 self._send_json(load_env_configs())
@@ -306,6 +311,14 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 self._save_todo(data)
             elif path == "/api/stocks":
                 self._save_stock(data)
+            elif path == "/api/ui_prefs":
+                with _UI_PREFS_LOCK:
+                    prefs = load_ui_prefs()
+                    for k in ("theme", "stock"):  # 白名单合并，防任意键写入
+                        if isinstance(data.get(k), str) and data[k]:
+                            prefs[k] = data[k]
+                    save_ui_prefs(prefs)
+                self._send_json({"ok": True, "ui": prefs})
             elif path == "/api/save_ai":
                 self._send_json({"ok": True, "ai": save_ai_config(data)})
             elif path == "/api/ai_script":
