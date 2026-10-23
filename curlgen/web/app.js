@@ -1463,7 +1463,9 @@ function renderConsole() {
 const dash = {
   year: 0, month: 0,   // 日历当前显示月份（month 1-12；0=未初始化）
   sel: null,           // 选中日期 {y, m, d}，默认今天
-  otdKey: "",          // 已加载的「历史上的今天」缓存键
+  holidays: {},        // {year: {"YYYY-MM-DD": "休"/"班"}} 年度缓存
+  holidaysLoading: {}, // 避免同年份并发请求
+  todos: [],           // 全部待办（后端持久化）
 };
 
 function isDashboard() { return state.tabs.length === 0; }
@@ -1490,7 +1492,8 @@ function renderDashboard() {
   renderDashStats();
   renderCalendar();
   renderAlmanac();
-  loadOnThisDay();
+  loadTodos();
+  loadHolidays(dash.year);
 }
 
 function renderDashStats() {
@@ -1556,13 +1559,32 @@ function renderCalendar() {
     const isSel = dash.sel && c.y === dash.sel.y && c.m === dash.sel.m && c.d === dash.sel.d;
     cell.className = "cal-cell" + (c.out ? " cal-out" : "") + (isToday ? " cal-today" : "") + (isSel ? " cal-sel" : "");
     const lb = calLunarLabel(lunarOf(c.y, c.m, c.d));
-    cell.innerHTML = `<span class="cal-d">${c.d}</span><span class="cal-l ${lb.cls}">${escapeHtml(lb.text)}</span>`;
+    const pad = (n) => String(n).padStart(2, "0");
+    const dateKey = `${c.y}-${pad(c.m)}-${pad(c.d)}`;
+    const hol = (dash.holidays[c.y] || {})[dateKey];
+    const holTag = hol ? `<span class="cal-tag ${hol === "休" ? "cal-xiu" : "cal-ban"}">${hol}</span>` : "";
+    cell.innerHTML = `${holTag}<span class="cal-d">${c.d}</span><span class="cal-l ${lb.cls}">${escapeHtml(lb.text)}</span>`;
     cell.addEventListener("click", () => {
       dash.sel = { y: c.y, m: c.m, d: c.d };
-      if (c.out) { dash.year = c.y; dash.month = c.m; }
+      if (c.out) { dash.year = c.y; dash.month = c.m; loadHolidays(dash.year); }
       renderCalendar();
       renderAlmanac();
-      loadOnThisDay();
+      renderTodos();
+    });
+    cell.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showCtxMenu(e.clientX, e.clientY, [["＋ 创建待办", async () => {
+        const text = await askPrompt("创建待办", `${c.y} 年 ${c.m} 月 ${c.d} 日`, "");
+        if (!text || !text.trim()) return;
+        const j = await api("/api/todos", { action: "add", date: dateKey, text: text.trim() });
+        if (j.error) { toast(j.error, "err"); return; }
+        dash.todos = j.todos || [];
+        dash.sel = { y: c.y, m: c.m, d: c.d };
+        if (c.out) { dash.year = c.y; dash.month = c.m; }
+        renderCalendar(); renderAlmanac(); renderTodos();
+        toast("待办已添加 ✓", "ok");
+      }]]);
     });
     grid.appendChild(cell);
   });
@@ -1593,26 +1615,63 @@ function renderAlmanac() {
     rows.map(([k, v]) => `<div class="alm-row"><span class="alm-k">${k}</span><span class="alm-v">${escapeHtml(v)}</span></div>`).join("");
 }
 
-/* 历史上的今天（后端代理中文维基百科；失败/无数据时隐藏区块） */
-async function loadOnThisDay() {
-  const s = dash.sel;
-  if (!s) return;
-  const key = `${s.m}-${s.d}`;
-  if (dash.otdKey === key) return;
-  dash.otdKey = key;
-  const card = $("onthisday-card");
-  const box = $("onthisday");
+/* 法定节假日 / 调休（后端代理 timor.tech，离线回落内置数据；按年缓存） */
+async function loadHolidays(year) {
+  if (dash.holidays[year] || dash.holidaysLoading[year]) return;
+  dash.holidaysLoading[year] = true;
+  try {
+    const j = await apiGet(`/api/holidays?year=${year}`);
+    if (j && j.map) {
+      dash.holidays[year] = j.map;
+      if (dash.year === year) renderCalendar(); // 当前显示年份到位后补标 休/班
+    }
+  } catch (e) { /* 离线且无内置数据：不标注 */ }
+  dash.holidaysLoading[year] = false;
+}
+
+/* 待办（跟随日历选中日；当日无待办则隐藏卡片） */
+async function loadTodos() {
+  const j = await apiGet("/api/todos");
+  if (j && j.todos) dash.todos = j.todos;
+  renderTodos();
+}
+
+function renderTodos() {
+  const card = $("todo-card");
+  if (!card || !dash.sel) return;
+  const pad = (n) => String(n).padStart(2, "0");
+  const key = `${dash.sel.y}-${pad(dash.sel.m)}-${pad(dash.sel.d)}`;
+  const items = dash.todos.filter((t) => t.date === key);
+  if (!items.length) { card.classList.add("hidden"); return; }
   card.classList.remove("hidden");
-  box.innerHTML = '<div class="dash-loading">加载中…</div>';
-  const j = await apiGet(`/api/onthisday?month=${s.m}&day=${s.d}`);
-  if (dash.otdKey !== key) return; // 期间已切换日期
-  if (!j || j.error || !(j.events || []).length) {
-    card.classList.add("hidden");
-    return;
-  }
-  box.innerHTML = j.events.map((e) =>
-    `<div class="otd-item"><span class="otd-year">${escapeHtml(String(e.year || ""))}</span>` +
-    `<span class="otd-text">${escapeHtml(e.text)}</span></div>`).join("");
+  $("todo-date").textContent = `${dash.sel.m} 月 ${dash.sel.d} 日`;
+  const box = $("todo-list");
+  box.innerHTML = "";
+  items.forEach((t) => {
+    const row = document.createElement("div");
+    row.className = "todo-item" + (t.done ? " done" : "");
+    const cb = document.createElement("span");
+    cb.className = "todo-check";
+    cb.textContent = t.done ? "☑" : "☐";
+    cb.title = t.done ? "标记未完成" : "标记完成";
+    cb.addEventListener("click", async () => {
+      const j = await api("/api/todos", { action: "toggle", id: t.id });
+      if (j.todos) { dash.todos = j.todos; renderTodos(); }
+    });
+    const text = document.createElement("span");
+    text.className = "todo-text";
+    text.textContent = t.text;
+    const del = document.createElement("span");
+    del.className = "todo-del";
+    del.textContent = "×";
+    del.title = "删除";
+    del.addEventListener("click", async () => {
+      const j = await api("/api/todos", { action: "del", id: t.id });
+      if (j.todos) { dash.todos = j.todos; renderTodos(); }
+    });
+    row.appendChild(cb); row.appendChild(text); row.appendChild(del);
+    box.appendChild(row);
+  });
 }
 
 /* ─────────── 前后置脚本（Postman 风格 pm API） ─────────── */
@@ -2426,16 +2485,18 @@ function bindEvents() {
   $("cal-prev").addEventListener("click", () => {
     dash.month--; if (dash.month < 1) { dash.month = 12; dash.year--; }
     renderCalendar();
+    loadHolidays(dash.year);
   });
   $("cal-next").addEventListener("click", () => {
     dash.month++; if (dash.month > 12) { dash.month = 1; dash.year++; }
     renderCalendar();
+    loadHolidays(dash.year);
   });
   $("cal-today").addEventListener("click", () => {
     const n = new Date();
     dash.year = n.getFullYear(); dash.month = n.getMonth() + 1;
     dash.sel = { y: dash.year, m: dash.month, d: n.getDate() };
-    renderCalendar(); renderAlmanac(); loadOnThisDay();
+    renderCalendar(); renderAlmanac(); renderTodos();
   });
   $("saved-import").addEventListener("click", () => $("import-file").click());
   $("import-file").addEventListener("change", (e) => {

@@ -1348,7 +1348,8 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 }
 .dash-card-title #cal-title { flex: 1; text-align: center; letter-spacing: 1px; }
 .dash-calendar-card { grid-row: span 2; }
-#onthisday-card { grid-column: 2; }
+#todo-card { grid-column: 2; }
+.dash-card-sub { font: 400 11px var(--font-ui); color: var(--text-3); margin-left: auto; }
 .dash-loading { color: var(--text-3); font-size: 12px; padding: 10px 0; }
 
 /* 日历 */
@@ -1359,12 +1360,21 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 }
 .cal-week .cal-weekend { color: var(--peach); }
 .cal-cell {
+  position: relative;
   display: flex; flex-direction: column; align-items: center; gap: 1px;
   padding: 6px 2px 5px; border-radius: var(--r-sm);
   border: 1px solid transparent; cursor: pointer;
   transition: all .15s var(--ease);
 }
 .cal-cell:hover { background: var(--bg-hover); }
+/* 法定节假日 休 / 调休补班 班 角标 */
+.cal-tag {
+  position: absolute; top: 1px; right: 2px;
+  font: 700 8px/1.4 var(--font-ui);
+  padding: 0 3px; border-radius: 3px;
+}
+.cal-tag.cal-xiu { color: var(--red); background: var(--red-border); }
+.cal-tag.cal-ban { color: var(--yellow); background: var(--bg-input); border: 1px solid var(--border-soft); }
 .cal-d { font: 600 13px var(--font-mono); color: var(--text-1); }
 .cal-l {
   font: 10px var(--font-ui); color: var(--text-3);
@@ -1397,20 +1407,26 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 .alm-ji .alm-k { color: var(--red); font-weight: 700; font-size: 13px; }
 .alm-ji .alm-v { color: var(--red); }
 
-/* 历史上的今天 */
-.otd-item {
-  display: flex; gap: 10px; padding: 6px 0;
-  border-top: 1px solid var(--border-soft);
+/* 待办（跟随日历选中日，无待办时卡片隐藏） */
+.todo-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 2px; border-top: 1px solid var(--border-soft);
   font: 12px var(--font-ui); line-height: 1.6;
 }
-.otd-item:first-child { border-top: none; }
-.otd-year { flex: none; min-width: 52px; font-family: var(--font-mono); color: var(--accent); }
-.otd-text { color: var(--text-2); }
+.todo-item:first-child { border-top: none; }
+.todo-check { flex: none; cursor: pointer; color: var(--accent); user-select: none; }
+.todo-text { flex: 1; color: var(--text-1); word-break: break-all; }
+.todo-item.done .todo-text { color: var(--text-3); text-decoration: line-through; }
+.todo-del {
+  flex: none; cursor: pointer; color: var(--text-3);
+  padding: 0 4px; border-radius: 3px; transition: all .15s var(--ease);
+}
+.todo-del:hover { color: var(--red); background: var(--red-border); }
 
 @media (max-width: 1100px) {
   .dash-stats { grid-template-columns: repeat(3, 1fr); }
   .dash-grid { grid-template-columns: 1fr; }
-  #onthisday-card { grid-column: auto; }
+  #todo-card { grid-column: auto; }
   .dash-calendar-card { grid-row: auto; }
 }
 

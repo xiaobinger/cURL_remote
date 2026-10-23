@@ -23,6 +23,7 @@ ENV_CONFIG_FILE = os.path.join(CONFIG_DIR, "env_configs.json")
 SSH_CONFIG_FILE = os.path.join(CONFIG_DIR, "ssh_config.json")
 SAVED_REQUESTS_FILE = os.path.join(CONFIG_DIR, "saved_requests.json")
 SIGN_CONFIG_FILE = os.path.join(CONFIG_DIR, "sign_configs.json")
+TODO_FILE = os.path.join(CONFIG_DIR, "todos.json")
 LOG_DIR = os.path.join(CONFIG_DIR, "logs")
 
 
@@ -87,6 +88,29 @@ def save_saved_requests(data):
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error("保存快捷请求失败: %s", e)
+        raise
+
+
+# ──────────────────────────── 待办（首页仪表盘） ────────────────────────────
+def load_todos():
+    """[{id, date(YYYY-MM-DD), text, done, created}]"""
+    if os.path.exists(TODO_FILE):
+        try:
+            with open(TODO_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+        except Exception as e:
+            logger.error("加载待办失败: %s", e)
+    return []
+
+
+def save_todos(data):
+    try:
+        with open(TODO_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error("保存待办失败: %s", e)
         raise
 
 

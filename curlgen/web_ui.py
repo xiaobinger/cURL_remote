@@ -23,6 +23,7 @@ from .config import (
     SCRIPT_DIR, load_env_configs, save_env_configs,
     load_ssh_config, save_ssh_config,
     load_saved_requests, save_saved_requests,
+    load_todos, save_todos,
     normalize_ssh_config, load_ssh_targets,
     resolve_ssh_cfg, env_ssh_target_alias,
 )
@@ -41,6 +42,38 @@ logger = logging.getLogger("curlgen.web_ui")
 SSH_META_MARK = "__CG_META__"
 SSH_META_RE = re.compile(r"__CG_META__:(\d{3}):([\d.]+):(\d+):([^\r\n]*)")
 SSH_META_FMT = ' -w "\\n__CG_META__:%{http_code}:%{time_total}:%{size_download}:%{content_type}"'
+
+# 内置法定节假日/调休表（国务院公布；timor.tech 在线数据离线兜底用，跨年时补充下一年）
+# 值："休"=公休日（含调休形成的连休），"班"=调休补班日
+BUILTIN_HOLIDAYS = {
+    2025: {
+        "2025-01-01": "休",
+        "2025-01-26": "班", "2025-01-28": "休", "2025-01-29": "休", "2025-01-30": "休",
+        "2025-01-31": "休", "2025-02-01": "休", "2025-02-02": "休", "2025-02-03": "休",
+        "2025-02-04": "休", "2025-02-08": "班",
+        "2025-04-04": "休", "2025-04-05": "休", "2025-04-06": "休", "2025-04-27": "班",
+        "2025-05-01": "休", "2025-05-02": "休", "2025-05-03": "休", "2025-05-04": "休",
+        "2025-05-05": "休",
+        "2025-05-31": "休", "2025-06-01": "休", "2025-06-02": "休",
+        "2025-09-28": "班",
+        "2025-10-01": "休", "2025-10-02": "休", "2025-10-03": "休", "2025-10-04": "休",
+        "2025-10-05": "休", "2025-10-06": "休", "2025-10-07": "休", "2025-10-08": "休",
+        "2025-10-11": "班",
+    },
+    2026: {
+        "2026-01-01": "休", "2026-01-02": "休", "2026-01-03": "休", "2026-01-04": "班",
+        "2026-02-14": "班", "2026-02-15": "休", "2026-02-16": "休", "2026-02-17": "休",
+        "2026-02-18": "休", "2026-02-19": "休", "2026-02-20": "休", "2026-02-21": "休",
+        "2026-02-22": "休", "2026-02-23": "休", "2026-02-28": "班",
+        "2026-04-04": "休", "2026-04-05": "休", "2026-04-06": "休",
+        "2026-05-01": "休", "2026-05-02": "休", "2026-05-03": "休", "2026-05-04": "休",
+        "2026-05-05": "休", "2026-05-09": "班",
+        "2026-06-19": "休", "2026-06-20": "休", "2026-06-21": "休",
+        "2026-09-20": "班", "2026-09-25": "休", "2026-09-26": "休", "2026-09-27": "休",
+        "2026-10-01": "休", "2026-10-02": "休", "2026-10-03": "休", "2026-10-04": "休",
+        "2026-10-05": "休", "2026-10-06": "休", "2026-10-07": "休", "2026-10-10": "班",
+    },
+}
 
 # Web 前端资源目录（打包后位于 sys._MEIPASS/curlgen/web）
 if getattr(sys, "frozen", False):
@@ -102,8 +135,10 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 self._send_json(load_ssh_targets())
             elif path == "/api/history":
                 self._send_json(self.app.history)
-            elif path == "/api/onthisday":
-                self._on_this_day()
+            elif path == "/api/holidays":
+                self._holidays()
+            elif path == "/api/todos":
+                self._send_json({"todos": load_todos()})
             elif path == "/api/events":
                 query = self.path.split("?", 1)[1] if "?" in self.path else ""
                 since = 0
@@ -156,6 +191,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
             elif path == "/api/test_ssh":
                 self.app.start_ssh_test(bool(data.get("target")), data.get("label"))
                 self._send_json({"ok": True})
+            elif path == "/api/todos":
+                self._save_todo(data)
             elif path == "/api/save_ai":
                 self._send_json({"ok": True, "ai": save_ai_config(data)})
             elif path == "/api/ai_script":
@@ -177,34 +214,72 @@ class _ApiHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, 500)
 
     # ── 业务 ──
-    def _on_this_day(self):
-        """历史上的今天：代理中文维基百科 onthisday（避免前端跨域，离线时前端隐藏区块）"""
+    def _holidays(self):
+        """法定节假日/调休：代理 timor.tech 年度数据（holiday=true→休, false→班），
+        失败时回落到内置数据（BUILTIN_HOLIDAYS）。结果按年缓存。"""
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
         params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
         try:
-            month = int(params.get("month", ""))
-            day = int(params.get("day", ""))
-            if not (1 <= month <= 12 and 1 <= day <= 31):
+            year = int(params.get("year", ""))
+            if not (2000 <= year <= 2100):
                 raise ValueError
         except ValueError:
-            self._send_json({"error": "invalid month/day"}, 400)
+            self._send_json({"error": "invalid year"}, 400)
             return
-        url = (f"https://api.wikimedia.org/feed/v1/wikipedia/zh/"
-               f"onthisday/all/{month:02d}/{day:02d}")
+        cache = self.app._holiday_cache
+        if year in cache:
+            self._send_json({"map": cache[year]})
+            return
         try:
             req = urllib.request.Request(
-                url, headers={"User-Agent": "curlgen-dashboard/2.0 (local tool)"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
+                f"https://timor.tech/api/holiday/year/{year}",
+                headers={"User-Agent": "curlgen-dashboard/2.0 (local tool)"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-            events = [
-                {"year": e.get("year"), "text": e.get("text", "")}
-                for e in data.get("selected", []) + data.get("events", [])
-                if e.get("text")
-            ][:12]
-            self._send_json({"events": events})
+            m = {}
+            for entry in (data.get("holiday") or {}).values():
+                d = entry.get("date")
+                if d:
+                    m[d] = "休" if entry.get("holiday") else "班"
+            if not m:
+                raise ValueError("empty holiday data")
+            cache[year] = m
+            self._send_json({"map": m})
         except Exception as e:
-            logger.info("onthisday 获取失败: %s", e)
-            self._send_json({"error": str(e)})
+            logger.info("节假日在线获取失败，回落内置数据: %s", e)
+            m = BUILTIN_HOLIDAYS.get(year, {})
+            cache[year] = m
+            self._send_json({"map": m, "fallback": True})
+
+    def _save_todo(self, data):
+        """待办增/改/删：action = add | toggle | del，返回全量列表"""
+        import time
+        todos = load_todos()
+        action = data.get("action")
+        if action == "add":
+            text = (data.get("text") or "").strip()
+            date = (data.get("date") or "").strip()
+            if not text or not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+                self._send_json({"error": "待办内容或日期不合法"})
+                return
+            todos.append({
+                "id": f"{int(time.time() * 1000)}",
+                "date": date, "text": text, "done": False,
+            })
+        elif action == "toggle":
+            tid = data.get("id")
+            for t in todos:
+                if t.get("id") == tid:
+                    t["done"] = not t.get("done")
+                    break
+        elif action == "del":
+            tid = data.get("id")
+            todos = [t for t in todos if t.get("id") != tid]
+        else:
+            self._send_json({"error": "unknown action"}, 400)
+            return
+        save_todos(todos)
+        self._send_json({"ok": True, "todos": todos})
 
     def _generate(self, data):
         lang = (data.pop("lang", "") or "curl").lower()
@@ -313,6 +388,7 @@ class WebCurlGenerator(QMainWindow):
         # ── 本地 API 服务 ──
         self.history = []          # [{time, method, url, curl}]
         self.events = []           # 事件流（执行输出 / 通知 / 测试结果）
+        self._holiday_cache = {}   # {year: {"YYYY-MM-DD": "休"/"班"}}
         self._exec_process = None
         self._exec_lock = threading.Lock()
         self._exec_mode = None     # 当前执行模式（local/ssh），供输出回调区分
