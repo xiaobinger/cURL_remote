@@ -7,6 +7,15 @@ from curlgen.terminal_manager import TerminalManager
 from tests.test_terminal_local import wait_text
 
 
+def wait_closed(manager, session_id):
+    deadline = time.time() + 2
+    while manager.events(session_id, 0)["session"]["status"] != "closed":
+        if time.time() >= deadline:
+            raise AssertionError("SSH reader did not close")
+        time.sleep(0.02)
+    return manager.events(session_id, 0)["events"]
+
+
 class FakeChannel:
     def __init__(self):
         self.closed = False
@@ -40,6 +49,17 @@ class BlockingSendChannel(FakeChannel):
         return super().send(data)
 
 
+class PartialSendChannel(FakeChannel):
+    def __init__(self, write_sizes):
+        super().__init__()
+        self.write_sizes = iter(write_sizes)
+
+    def send(self, data):
+        size = min(next(self.write_sizes), len(data))
+        self.sent.append(bytes(data[:size]))
+        return size
+
+
 class GateShellChannelTests(unittest.TestCase):
     def make_session(self, channel=None):
         session = GateShellSession("gate", 22, "user", "secret")
@@ -51,11 +71,30 @@ class GateShellChannelTests(unittest.TestCase):
         channel.incoming = [b"root@test\n"]
         session = self.make_session(channel)
 
-        session.send("hostname\n")
+        session.send("终端🙂\n")
         self.assertEqual(session.recv_available(), b"root@test\n")
         self.assertEqual(session.recv_available(), b"")
-        self.assertEqual(channel.sent, ["hostname\n".encode("utf-8")])
+        self.assertEqual(channel.sent, ["终端🙂\n".encode("utf-8")])
         self.assertFalse(session.closed)
+
+    def test_send_retries_partial_writes_without_changing_utf8_bytes(self):
+        channel = PartialSendChannel([1, 2, 1, 4, 20])
+        session = self.make_session(channel)
+
+        session.send("终端🙂\n")
+
+        self.assertEqual(b"".join(channel.sent), "终端🙂\n".encode("utf-8"))
+        self.assertEqual([len(part) for part in channel.sent], [1, 2, 1, 4, 3])
+
+    def test_closed_channel_still_drains_ready_bytes(self):
+        channel = FakeChannel()
+        channel.incoming = [b"buffered-tail"]
+        channel.closed = True
+        session = self.make_session(channel)
+
+        self.assertTrue(session.closed)
+        self.assertEqual(session.recv_available(), b"buffered-tail")
+        self.assertEqual(session.recv_available(), b"")
 
     def test_closed_channel_rejects_send_and_reads_as_eof(self):
         session = self.make_session()
@@ -166,6 +205,56 @@ class ClosingReaderFakeGate(FakeGate):
             return b""
 
 
+class ChunkedOutputFakeGate(ClosingReaderFakeGate):
+    chunks = ()
+
+    def connect_host(self, target):
+        self.targets.append(target)
+        self.output.extend(self.chunks)
+
+
+class ClosedWithBufferFakeGate(ClosingReaderFakeGate):
+    def connect_host(self, target):
+        self.targets.append(target)
+        self.output.extend([b"root@test\n", b"buffered-tail"])
+        self.closed = True
+
+
+class ActiveCloseDrainFakeGate(FakeGate):
+    def __init__(self, cfg, on_log=None, stop_event=None):
+        super().__init__(cfg, on_log=on_log, stop_event=stop_event)
+        self.recv_waiting = threading.Event()
+        self.release_recv = threading.Event()
+        self.operations = []
+
+    def recv_available(self):
+        with self._lock:
+            if self.closed:
+                return b""
+            if self.output:
+                data = self.output.pop(0)
+                self.operations.append(("stdout", data))
+                return data
+            if self.recv_waiting.is_set():
+                return b""
+        self.recv_waiting.set()
+        if not self.release_recv.wait(2):
+            raise RuntimeError("timed out waiting to finish fake recv")
+        with self._lock:
+            if self.closed:
+                return b""
+            data = self.output.pop(0) if self.output else b""
+            if data:
+                self.operations.append(("stdout", data))
+            return data
+
+    def close(self):
+        with self._lock:
+            self.operations.append(("close", None))
+            self.closed = True
+            self.release_recv.set()
+
+
 class FailingReaderFakeGate(FakeGate):
     def recv_available(self):
         raise RuntimeError("read failed: " + self.cfg["jump_pass"])
@@ -187,13 +276,13 @@ class SSHTerminalTests(unittest.TestCase):
         if self.manager is not None:
             self.manager.close_all()
 
-    def make_manager(self, factory=FakeGate, cfg=None):
+    def make_manager(self, factory=FakeGate, cfg=None, password="secret"):
         if cfg is None:
             cfg = {
                 "jump_host": "gate",
                 "jump_port": "2222",
                 "jump_user": "user",
-                "jump_pass": "secret",
+                "jump_pass": password,
                 "targets": [
                     {"label": "生产A", "host": "10.0.0.8", "port": "22", "user": "root"},
                     {"label": "生产B", "host": "10.0.0.9", "port": "22", "user": "root"},
@@ -298,6 +387,108 @@ class SSHTerminalTests(unittest.TestCase):
         self.assertLess(descriptions.index(("stdout", "root@test\n")), descriptions.index(("status", "closed")))
         self.assertEqual(descriptions.count(("status", "closed")), 1)
         self.assertTrue(ClosingReaderFakeGate.instances[0].closed)
+
+    def test_natural_eof_drains_closed_channel_buffer_before_closed(self):
+        manager = self.make_manager(factory=ClosedWithBufferFakeGate)
+        session = manager.open("ssh", "生产A")
+        events = wait_closed(manager, session["id"])
+        descriptions = [(event["type"], event["text"]) for event in events]
+
+        self.assertEqual(descriptions[-1], ("status", "closed"))
+        self.assertIn(("stdout", "buffered-tail"), descriptions)
+        self.assertLess(
+            descriptions.index(("stdout", "buffered-tail")),
+            descriptions.index(("status", "closed")),
+        )
+
+    def test_explicit_close_bounded_drains_ready_tail_before_adapter_close(self):
+        manager = self.make_manager(factory=ActiveCloseDrainFakeGate)
+        session = manager.open("ssh", "生产A")
+        sid = session["id"]
+        wait_text(manager, sid, "root@test")
+        gate = ActiveCloseDrainFakeGate.instances[0]
+        self.assertTrue(gate.recv_waiting.wait(1))
+        with gate._lock:
+            gate.output.append(b"buffered-tail")
+
+        closer = threading.Thread(target=manager.close, args=(sid,))
+        closer.start()
+        deadline = time.monotonic() + 0.05
+        while not gate.closed and time.monotonic() < deadline:
+            time.sleep(0.005)
+        gate.release_recv.set()
+        closer.join(2)
+
+        self.assertFalse(closer.is_alive())
+        events = manager.events(sid, 0)["events"]
+        descriptions = [(event["type"], event["text"]) for event in events]
+        self.assertIn(("stdout", "buffered-tail"), descriptions)
+        self.assertLess(
+            descriptions.index(("stdout", "buffered-tail")),
+            descriptions.index(("status", "closed")),
+        )
+        self.assertLess(
+            gate.operations.index(("stdout", b"buffered-tail")),
+            gate.operations.index(("close", None)),
+        )
+
+    def test_explicit_close_closes_adapter_to_release_blocked_reader(self):
+        manager = self.make_manager(factory=ActiveCloseDrainFakeGate)
+        session = manager.open("ssh", "生产A")
+        sid = session["id"]
+        wait_text(manager, sid, "root@test")
+        gate = ActiveCloseDrainFakeGate.instances[0]
+        self.assertTrue(gate.recv_waiting.wait(1))
+
+        started = time.monotonic()
+        manager.close(sid)
+
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertTrue(gate.closed)
+        self.assertEqual(manager.events(sid, 0)["events"][-1]["text"], "closed")
+
+    def test_password_is_redacted_at_every_chunk_boundary(self):
+        for split in range(1, len("secret")):
+            with self.subTest(split=split):
+                ChunkedOutputFakeGate.chunks = [
+                    b"prefix " + b"secret"[:split],
+                    b"secret"[split:] + b" suffix",
+                ]
+                manager = self.make_manager(factory=ChunkedOutputFakeGate)
+                session = manager.open("ssh", "生产A")
+                events = wait_closed(manager, session["id"])
+                stdout = "".join(
+                    event["text"] for event in events if event["type"] == "stdout"
+                )
+
+                self.assertEqual(stdout, "prefix [已隐藏] suffix")
+                self.assertNotIn("secret", str(events))
+
+    def test_streaming_redaction_flushes_non_password_prefix_at_eof(self):
+        ChunkedOutputFakeGate.chunks = [b"sec", b"ular / se", b"cre"]
+        manager = self.make_manager(factory=ChunkedOutputFakeGate)
+        session = manager.open("ssh", "生产A")
+        events = wait_closed(manager, session["id"])
+        stdout = "".join(
+            event["text"] for event in events if event["type"] == "stdout"
+        )
+
+        self.assertEqual(stdout, "secular / secre")
+
+    def test_streaming_redaction_handles_multibyte_password_and_utf8_chunks(self):
+        raw = "开头密碼secret结尾".encode("utf-8")
+        ChunkedOutputFakeGate.chunks = [raw[:7], raw[7:11], raw[11:15], raw[15:]]
+        manager = self.make_manager(
+            factory=ChunkedOutputFakeGate, password="密碼secret"
+        )
+        session = manager.open("ssh", "生产A")
+        events = wait_closed(manager, session["id"])
+        stdout = "".join(
+            event["text"] for event in events if event["type"] == "stdout"
+        )
+
+        self.assertEqual(stdout, "开头[已隐藏]结尾")
+        self.assertNotIn("密碼secret", str(events))
 
     def test_reader_error_is_sanitized_and_does_not_leak_password(self):
         manager = self.make_manager(factory=FailingReaderFakeGate)

@@ -8,11 +8,47 @@ import time
 import uuid
 
 
+class _SSHStreamRedactor:
+    def __init__(self, password):
+        self.password = str(password or "")
+        self._pending = ""
+
+    def push(self, text, final=False):
+        if not self.password:
+            return text
+        data = self._pending + text
+        self._pending = ""
+        parts = []
+        while True:
+            index = data.find(self.password)
+            if index < 0:
+                break
+            parts.append(data[:index])
+            parts.append("[已隐藏]")
+            data = data[index + len(self.password):]
+
+        keep = 0 if final else self._password_prefix_length(data)
+        parts.append(data[:len(data) - keep])
+        self._pending = data[len(data) - keep:]
+        if final:
+            parts.append(self._pending)
+            self._pending = ""
+        return "".join(parts)
+
+    def _password_prefix_length(self, text):
+        longest = 0
+        for size in range(1, min(len(text), len(self.password) - 1) + 1):
+            if self.password.startswith(text[-size:]):
+                longest = size
+        return longest
+
+
 class TerminalManager:
     MAX_EVENTS = 1000
     MAX_EVENT_BYTES = 512 * 1024
     READER_JOIN_TIMEOUT = 5
     READER_CLOSE_TIMEOUT = 0.1
+    SSH_READER_DRAIN_TIMEOUT = 0.1
 
     def __init__(self, session_factory=None, ssh_config_loader=None):
         self._sessions = {}
@@ -138,12 +174,21 @@ class TerminalManager:
                 adapter = session["adapter"]
                 readers = list(session["readers"])
                 was_ready = session["status"] == "ready"
+        current = threading.current_thread()
+        if was_ready:
+            drain_deadline = time.monotonic() + self.SSH_READER_DRAIN_TIMEOUT
+            for reader in readers:
+                if reader is current:
+                    continue
+                remaining = drain_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                reader.join(timeout=remaining)
         if adapter is not None:
             self._close_adapter(adapter)
         if was_ready:
-            current = threading.current_thread()
             for reader in readers:
-                if reader is not current:
+                if reader is not current and reader.is_alive():
                     reader.join(timeout=self.READER_JOIN_TIMEOUT)
         self._finish(session)
 
@@ -210,6 +255,7 @@ class TerminalManager:
         adapter = None
         cfg = {}
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        redactor = _SSHStreamRedactor("")
         try:
             loader = self._ssh_config_loader
             if loader is None:
@@ -217,6 +263,7 @@ class TerminalManager:
                 loader = load_ssh_config
             from curlgen.config import resolve_ssh_cfg
             cfg = resolve_ssh_cfg(loader(), session["label"])
+            redactor = _SSHStreamRedactor(cfg.get("jump_pass"))
             label = session["label"]
             if (
                 not label
@@ -266,17 +313,19 @@ class TerminalManager:
 
             while True:
                 with self._lock:
-                    if session["closed"] or session["closing"]:
+                    if session["closed"]:
                         break
-                if adapter.closed:
-                    break
+                    closing = session["closing"]
                 data = adapter.recv_available()
                 if data:
                     text = decoder.decode(data)
-                    if text:
-                        self._emit(session, "stdout", self._ssh_safe_text(text, cfg))
-                else:
-                    time.sleep(0.05)
+                    safe_text = redactor.push(text)
+                    if safe_text:
+                        self._emit(session, "stdout", safe_text)
+                    continue
+                if closing or adapter.closed:
+                    break
+                time.sleep(0.05)
         except Exception as exc:
             with self._lock:
                 should_report = not session["closed"] and not session["closing"]
@@ -285,8 +334,9 @@ class TerminalManager:
                     self._emit(session, "stderr", self._ssh_safe_text(str(exc), cfg))
         finally:
             tail = decoder.decode(b"", final=True)
-            if tail:
-                self._emit(session, "stdout", self._ssh_safe_text(tail, cfg))
+            safe_tail = redactor.push(tail, final=True)
+            if safe_tail:
+                self._emit(session, "stdout", safe_tail)
             if adapter is not None:
                 self._close_adapter(adapter)
             self._finish(session)

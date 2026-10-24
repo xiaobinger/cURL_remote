@@ -130,9 +130,9 @@ class GateShellSession:
                 remaining = remaining[sent:]
 
     def recv_available(self):
-        """读取当前已到达的数据；无数据或通道已关闭时返回空字节串。"""
+        """读取当前已到达的数据；关闭通道中的就绪数据也会先排空。"""
         with self._channel_lock:
-            if self._chan is None or self._chan.closed or not self._chan.recv_ready():
+            if self._chan is None or not self._chan.recv_ready():
                 return b""
             try:
                 return self._chan.recv(65536)
