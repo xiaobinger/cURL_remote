@@ -142,7 +142,44 @@ def save_stocks(data):
         raise
 
 
-# ──────────────────────────── UI 偏好（主题 / 默认行情标的） ────────────────────────────
+# ──────────────────────────── UI 偏好（主题 / 默认行情标的 / Dashboard 布局） ────────────────────────────
+DASHBOARD_COMPONENT_IDS = ("stats", "calendar", "almanac", "market", "todo", "terminal")
+DEFAULT_DASHBOARD_LAYOUT = {
+    "version": 1,
+    "items": [
+        {"id": "stats", "visible": True, "width": 12},
+        {"id": "calendar", "visible": True, "width": 8},
+        {"id": "almanac", "visible": True, "width": 4},
+        {"id": "market", "visible": True, "width": 8},
+        {"id": "todo", "visible": True, "width": 4},
+        {"id": "terminal", "visible": True, "width": 12},
+    ],
+}
+
+
+def normalize_dashboard_layout(value):
+    import copy
+    source = value.get("items", []) if isinstance(value, dict) else []
+    by_id = {item["id"]: copy.deepcopy(item) for item in DEFAULT_DASHBOARD_LAYOUT["items"]}
+    result, seen = [], set()
+    for item in source:
+        if not isinstance(item, dict):
+            continue
+        component_id = item.get("id")
+        if component_id not in by_id or component_id in seen:
+            continue
+        seen.add(component_id)
+        result.append({
+            "id": component_id,
+            "visible": item.get("visible") is not False,
+            "width": item.get("width") if item.get("width") in (4, 6, 8, 12) else 4,
+        })
+    for item in DEFAULT_DASHBOARD_LAYOUT["items"]:
+        if item["id"] not in seen:
+            result.append(copy.deepcopy(item))
+    return {"version": 1, "items": result}
+
+
 def load_ui_prefs():
     """{"theme": "dark", "stock": "sh000001"}；WebEngine 的 localStorage 不保证持久化，走文件"""
     if os.path.exists(UI_PREFS_FILE):

@@ -25,7 +25,7 @@ from .config import (
     load_saved_requests, save_saved_requests,
     load_todos, save_todos,
     load_stocks, save_stocks,
-    load_ui_prefs, save_ui_prefs,
+    load_ui_prefs, save_ui_prefs, normalize_dashboard_layout,
     normalize_ssh_config, load_ssh_targets,
     resolve_ssh_cfg, env_ssh_target_alias,
 )
@@ -317,6 +317,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
                     for k in ("theme", "stock"):  # 白名单合并，防任意键写入
                         if isinstance(data.get(k), str) and data[k]:
                             prefs[k] = data[k]
+                    if "dashboard" in data:
+                        prefs["dashboard"] = normalize_dashboard_layout(data["dashboard"])
                     save_ui_prefs(prefs)
                 self._send_json({"ok": True, "ui": prefs})
             elif path == "/api/save_ai":
