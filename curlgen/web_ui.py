@@ -393,6 +393,7 @@ class _ApiHandler(BaseHTTPRequestHandler):
         session = self.app.terminals.open(
             kind=payload.get("kind") or "local",
             label=payload.get("label") or None,
+            target_index=payload.get("target_index"),
         )
         return {key: session[key] for key in ("id", "kind", "label", "status")}
 

@@ -22,8 +22,9 @@ class FakeTerminals:
             "next": 2,
         }
 
-    def open(self, kind="local", label=None):
-        self.calls.append(("open", kind, label))
+    def open(self, kind="local", label=None, target_index=None):
+        call = ("open", kind, label)
+        self.calls.append(call if target_index is None else call + (target_index,))
         response = {"id": "t1", "kind": kind, "label": label, "status": "connecting"}
         response.update(self.open_extra)
         return response
@@ -333,6 +334,16 @@ class TerminalAPIHTTPTests(unittest.TestCase):
         self.assertEqual(self.terminals.calls, [("open", "ssh", "生产A")])
         self.assertNotIn(b"server-secret", body)
         self.assertNotIn(b"jump_pass", body)
+
+    def test_open_route_passes_target_index_without_other_fields(self):
+        status, _, _, _ = self.assert_json_response(
+            "POST",
+            "/api/terminal/open",
+            {"kind": "ssh", "label": "同名", "target_index": 1, "jump_pass": "ignored"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(self.terminals.calls, [("open", "ssh", "同名", 1)])
 
     def test_open_route_filters_sensitive_fields_from_manager_response(self):
         self.terminals.open_extra = {

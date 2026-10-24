@@ -239,15 +239,20 @@ def load_ssh_targets():
     return normalize_ssh_config(load_ssh_config()).get("targets", [])
 
 
-def resolve_ssh_cfg(ssh_data, label=None):
-    """按目标机标签解析出完整执行配置（jump_* + target_*）。
-    label 为空或找不到时用第一个目标机。"""
+def resolve_ssh_cfg(ssh_data, label=None, target_index=None):
+    """按目标机标签解析完整配置；有索引时同时校验索引与标签。
+    旧调用未传索引时保持原标签解析行为。"""
     data = normalize_ssh_config(ssh_data)
     targets = data.get("targets", [])
     target = None
-    if label:
+    indexed = type(target_index) is int and 0 <= target_index < len(targets)
+    if indexed:
+        candidate = targets[target_index]
+        if not label or candidate["label"] == label:
+            target = candidate
+    elif target_index is None and label:
         target = next((t for t in targets if t["label"] == label), None)
-    if target is None and targets:
+    if target is None and targets and target_index is None:
         target = targets[0]
     cfg = {
         "jump_host": data.get("jump_host", ""),

@@ -310,6 +310,24 @@ class SSHTerminalTests(unittest.TestCase):
         self.assertNotIn("jump_pass", events)
         self.assertNotIn("jump_host", events)
 
+    def test_target_index_selects_exact_duplicate_label_and_checks_label(self):
+        cfg = {
+            "jump_host": "gate",
+            "targets": [
+                {"label": "同名", "host": "10.0.0.8", "port": "22", "user": "root"},
+                {"label": "同名", "host": "10.0.0.9", "port": "22", "user": "root"},
+            ],
+        }
+        manager = self.make_manager(cfg=cfg)
+        session = manager.open("ssh", "同名", target_index=1)
+        wait_text(manager, session["id"], "root@test")
+        self.assertEqual(FakeGate.instances[0].targets, ["10.0.0.9"])
+
+        FakeGate.instances = []
+        mismatched = manager.open("ssh", "其他名称", target_index=1)
+        wait_text(manager, mismatched["id"], "error: 目标机配置不存在")
+        self.assertEqual(FakeGate.instances, [])
+
     def test_write_submits_ssh_command_without_duplicating_existing_newline(self):
         manager = self.make_manager()
         session = manager.open("ssh", "生产B")
@@ -486,6 +504,47 @@ class SSHTerminalTests(unittest.TestCase):
         )
 
         self.assertEqual(stdout, "secular / secre")
+
+    def test_ansi_colors_and_titles_are_removed_at_every_chunk_boundary(self):
+        raw = b"before \x1b[01;34mblue\x1b[0m \x1b]0;root@test:~\x07after"
+        for split in range(1, len(raw)):
+            with self.subTest(split=split):
+                ChunkedOutputFakeGate.chunks = [raw[:split], raw[split:]]
+                manager = self.make_manager(factory=ChunkedOutputFakeGate)
+                session = manager.open("ssh", "生产A")
+                events = wait_closed(manager, session["id"])
+                stdout = "".join(
+                    event["text"] for event in events if event["type"] == "stdout"
+                )
+
+                self.assertEqual(stdout, "before blue after")
+                self.assertNotIn("\x1b", stdout)
+
+    def test_osc_string_terminator_tolerates_repeated_escape(self):
+        for raw in (
+            b"visible\x1b]0;title\x1b\\after",
+            b"visible\x1b]0;title\x1b\x1b\\after",
+        ):
+            with self.subTest(raw=raw):
+                ChunkedOutputFakeGate.chunks = [raw[:24], raw[24:]]
+                manager = self.make_manager(factory=ChunkedOutputFakeGate)
+                session = manager.open("ssh", "生产A")
+                events = wait_closed(manager, session["id"])
+                stdout = "".join(
+                    event["text"] for event in events if event["type"] == "stdout"
+                )
+                self.assertEqual(stdout, "visibleafter")
+
+    def test_incomplete_ansi_sequence_is_discarded_at_eof(self):
+        ChunkedOutputFakeGate.chunks = [b"visible\x1b[31"]
+        manager = self.make_manager(factory=ChunkedOutputFakeGate)
+        session = manager.open("ssh", "生产A")
+        events = wait_closed(manager, session["id"])
+        stdout = "".join(
+            event["text"] for event in events if event["type"] == "stdout"
+        )
+
+        self.assertEqual(stdout, "visible")
 
     def test_streaming_redaction_handles_multibyte_password_and_utf8_chunks(self):
         raw = "开头密碼secret结尾".encode("utf-8")

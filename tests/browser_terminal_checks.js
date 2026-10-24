@@ -27,6 +27,7 @@
     const originalFetch = window.fetch;
     const originalToast = window.toast;
     const originalSSH = state.ssh;
+    const originalSSHTargets = state.sshTargets;
     const requests = [];
     const activePollsById = new Map();
     let activePolls = 0;
@@ -53,7 +54,7 @@
       const pollId = isPoll ? new URL(target).searchParams.get("id") : null;
       const inputBody = isInput ? JSON.parse(options.body) : null;
       if (isInput) inputAttempts.push({ id: inputBody.id, text: inputBody.text });
-      requests.push({ target, method: (options && options.method) || "GET" });
+      requests.push({ target, method: (options && options.method) || "GET", body: options && options.body });
       if (isPoll) {
         activePolls += 1;
         maxActivePolls = Math.max(maxActivePolls, activePolls);
@@ -493,33 +494,104 @@
         assert(cleanup.ok, "已不存在测试中的真实旧会话应清理");
       });
 
-      await check("SSH 菜单使用 .ctx-menu 且 click 不立即关闭", async () => {
-        state.ssh = { targets: [{ label: "内存测试机", host: "127.0.0.1" }] };
-        document.querySelector("#terminal-ssh").click();
-        const menu = document.querySelector(".ctx-menu");
-        assert(menu, "SSH 按钮应打开 .ctx-menu");
-        assert(menu.textContent.includes("内存测试机(127.0.0.1)"), "菜单应显示 label(host)");
-        assert(!document.querySelector("#ctx-menu"), "菜单不得使用错误的 #ctx-menu 断言");
-        document.body.click();
+      await check("终端全屏与 Esc 退出保留会话", async () => {
+        await panel.openLocal();
+        await waitFor(() => panel.status === "ready", "全屏前应建立本地会话");
+        const id = panel.id;
+        const card = document.querySelector('[data-component="terminal"]');
+        const toggle = document.querySelector("#terminal-fullscreen");
+        toggle.click();
+        assert(card.classList.contains("terminal-maximized"), "按钮应最大化终端卡片");
+        assert(document.body.classList.contains("terminal-fullscreen-open"), "全屏应锁定背景滚动");
+        assert(toggle.getAttribute("aria-pressed") === "true", "全屏按钮应暴露 pressed 状态");
+        assert(panel.id === id && await sessionStatus(id) === "ready", "进入全屏不得重开或断开会话");
+        card.classList.add("component-hidden");
+        assert(getComputedStyle(card).display === "none", "全屏终端仍必须响应组件隐藏");
+        card.classList.remove("component-hidden");
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        assert(!card.classList.contains("terminal-maximized"), "Esc 应退出全屏");
+        assert(!document.body.classList.contains("terminal-fullscreen-open"), "退出全屏应恢复背景滚动");
+        assert(panel.id === id && await sessionStatus(id) === "ready", "退出全屏不得重开或断开会话");
+        toggle.click();
+        toggle.click();
+        assert(!card.classList.contains("terminal-maximized"), "再次点击应退出全屏");
       });
 
-      await check("无 SSH 配置给出设置提示", async () => {
-        const messages = [];
-        window.toast = (message, type) => messages.push({ message, type });
+      await check("SSH 下拉列出全部服务器并直接切换", async () => {
+        state.sshTargets = [
+          { label: "内存测试机A", host: "127.0.0.1" },
+          { label: "内存测试机B", host: "127.0.0.2" },
+        ];
+        state.ssh = { targets: state.sshTargets };
+        panel.refresh();
+        const select = document.querySelector("#terminal-target");
+        const options = Array.from(select.options).map((option) => option.textContent);
+        assert(options.some((label) => label.includes("内存测试机A(127.0.0.1)")), "下拉应显示第一台 label(host)");
+        assert(options.some((label) => label.includes("内存测试机B(127.0.0.2)")), "下拉应显示第二台 label(host)");
+        const localId = panel.id;
+        select.value = "1";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        await waitFor(() => panel.kind === "ssh" && panel.label === "内存测试机B", "选择服务器应直接打开对应 SSH 会话");
+        assert(panel.id !== localId, "选择服务器应切换 session id");
+        assert(await sessionStatus(localId) === "closed", "选择服务器前必须关闭旧本地会话");
+        await waitFor(() => text().includes("目标机配置不存在"), "应使用现有安全后端解析所选目标");
+        const openRequest = requests.filter((entry) => entry.target.endsWith("/api/terminal/open") && entry.body)
+          .map((entry) => JSON.parse(entry.body)).at(-1);
+        assert(openRequest.target_index === 1 && openRequest.label === "内存测试机B",
+          "下拉必须把目标索引和标签一起发送，避免同标签歧义");
+        assert(!document.querySelector(".ctx-menu"), "服务器选择不得再依赖上下文菜单");
+      });
+
+      await check("取消 SSH 编辑后下拉仍使用已保存目标", async () => {
+        state.sshTargets = [{ label: "已保存目标", host: "127.0.0.8", port: "22", user: "root" }];
+        state.ssh = { targets: [{ label: "已保存目标", host: "127.0.0.250", port: "22", user: "root" }] };
+        panel.refresh();
+        const select = document.querySelector("#terminal-target");
+        assert(select.options[1].textContent === "已保存目标(127.0.0.8)",
+          "未保存的 host 编辑不得进入终端下拉或改变实际连接目标");
+      });
+
+      await check("保存 SSH 设置后立即刷新服务器下拉", async () => {
+        state.sshTargets = [];
         state.ssh = { targets: [] };
-        document.querySelector("#terminal-ssh").click();
-        assert(messages.some((entry) => entry.message === "请先在 SSH 设置中配置堡垒机和目标机"), "应提示先配置 SSH");
-        assert(!document.querySelector(".ctx-menu"), "无配置不应打开空菜单");
+        panel.refresh();
+        const select = document.querySelector("#terminal-target");
+        assert(select.disabled, "保存前空配置应禁用下拉");
+        state.ssh.targets.push({ label: "保存后新增", host: "127.0.0.9", port: "22", user: "root" });
+        const fetchBeforeSave = window.fetch;
+        window.fetch = async (url, options) => String(url).endsWith("/api/save_ssh")
+          ? new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } })
+          : fetchBeforeSave(url, options);
+        try {
+          await saveSsh();
+        } finally {
+          window.fetch = fetchBeforeSave;
+        }
+        assert(!select.disabled && select.options.length === 2, "保存成功后必须立即重建服务器下拉");
+        assert(select.options[1].textContent.includes("保存后新增(127.0.0.9)"), "新保存目标应立即可选");
+      });
+
+      await check("无 SSH 配置时下拉显示设置提示", async () => {
+        state.sshTargets = [];
+        state.ssh = { targets: [] };
+        panel.refresh();
+        const select = document.querySelector("#terminal-target");
+        assert(select.options.length === 1, "无配置只保留提示项");
+        assert(select.options[0].textContent.includes("请先配置 SSH"), "提示项应引导先配置 SSH");
+        assert(select.disabled, "无配置时服务器下拉不可选择");
       });
 
       await check("组件隐藏不自动断线，重新可见只 ensureLocal 一次", async () => {
+        await panel.openLocal();
+        await waitFor(() => panel.status === "ready", "隐藏组件前应建立本地 ready 会话");
         const id = panel.id;
         const item = dashboardLayout.items.find((entry) => entry.id === "terminal");
         item.visible = false;
         dashboardLayout.apply();
         syncDashboard();
         await sleep(250);
-        assert(panel.id === id && await sessionStatus(id) === "ready", "隐藏组件不得关闭会话");
+        assert(panel.id === id && await sessionStatus(id) === "ready",
+          `隐藏组件不得关闭会话：id=${id} current=${panel.id} kind=${panel.kind} status=${panel.status} backend=${await sessionStatus(id)}`);
         await panel.close();
         await panel.ensureLocal();
         assert(!panel.id, "组件隐藏时 ensureLocal 不得打开会话");
@@ -567,6 +639,7 @@
       window.toast = originalToast;
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
       state.ssh = originalSSH;
+      state.sshTargets = originalSSHTargets;
       document.body.click();
       if (panel.id) await panel.openLocal();
     }

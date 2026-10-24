@@ -1543,6 +1543,32 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 }
 .terminal-toolbar button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .terminal-toolbar button:disabled { opacity: .45; cursor: default; }
+.terminal-target {
+  flex: 1 1 190px; min-width: 150px; max-width: 300px; min-height: 26px;
+  padding: 3px 26px 3px 9px; border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  background: var(--bg-input); color: var(--text-2); font: 11px var(--font-ui);
+}
+.terminal-target:disabled { opacity: .55; cursor: default; }
+.terminal-fullscreen-toggle {
+  flex: none; padding: 2px 8px; border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  background: var(--bg-input); color: var(--text-2); font: 11px var(--font-ui); cursor: pointer;
+}
+.terminal-fullscreen-toggle:hover, .terminal-fullscreen-toggle[aria-pressed="true"] {
+  border-color: var(--accent); color: var(--accent);
+}
+body.terminal-fullscreen-open { overflow: hidden; }
+.terminal-card.terminal-maximized {
+  position: fixed; inset: 12px; z-index: 150; display: flex; flex-direction: column;
+  margin: 0; background: var(--bg-panel-solid); box-shadow: 0 18px 60px rgba(0, 0, 0, .48);
+}
+.terminal-card.terminal-maximized.component-hidden { display: none; }
+.terminal-maximized > .dash-card-title,
+.terminal-maximized > .terminal-input-row,
+.terminal-maximized > .terminal-toolbar { flex: none; }
+.terminal-maximized .terminal-output {
+  flex: 1; height: auto; min-height: 0; max-height: none;
+}
+.terminal-maximized .terminal-target { flex-grow: 0; min-width: 240px; }
 
 @media (max-width: 1100px) {
   .dash-stats { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }

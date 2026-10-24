@@ -8,6 +8,46 @@ import time
 import uuid
 
 
+class _ANSIStreamFilter:
+    def __init__(self):
+        self._state = "text"
+
+    def push(self, text, final=False):
+        output = []
+        for char in text:
+            state = self._state
+            if state == "text":
+                if char == "\x1b":
+                    self._state = "escape"
+                else:
+                    output.append(char)
+            elif state == "escape":
+                if char == "[":
+                    self._state = "csi"
+                elif char == "]":
+                    self._state = "osc"
+                elif char == "\x1b":
+                    self._state = "escape"
+                else:
+                    self._state = "text"
+            elif state == "csi":
+                if "\x40" <= char <= "\x7e":
+                    self._state = "text"
+            elif state == "osc":
+                if char == "\x07":
+                    self._state = "text"
+                elif char == "\x1b":
+                    self._state = "osc_escape"
+            elif state == "osc_escape":
+                if char == "\\":
+                    self._state = "text"
+                elif char != "\x1b":
+                    self._state = "osc"
+        if final:
+            self._state = "text"
+        return "".join(output)
+
+
 class _SSHStreamRedactor:
     def __init__(self, password):
         self.password = str(password or "")
@@ -56,7 +96,7 @@ class TerminalManager:
         self._session_factory = session_factory
         self._ssh_config_loader = ssh_config_loader
 
-    def open(self, kind="local", label=None):
+    def open(self, kind="local", label=None, target_index=None):
         self.cleanup_idle()
         if kind not in ("local", "ssh"):
             raise ValueError("unsupported terminal kind")
@@ -65,6 +105,7 @@ class TerminalManager:
             "id": sid,
             "kind": kind,
             "label": label or "",
+            "target_index": target_index,
             "status": "connecting",
             "events": [],
             "event_bytes": 0,
@@ -255,6 +296,7 @@ class TerminalManager:
         adapter = None
         cfg = {}
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        ansi_filter = _ANSIStreamFilter()
         redactor = _SSHStreamRedactor("")
         try:
             loader = self._ssh_config_loader
@@ -262,7 +304,7 @@ class TerminalManager:
                 from curlgen.config import load_ssh_config
                 loader = load_ssh_config
             from curlgen.config import resolve_ssh_cfg
-            cfg = resolve_ssh_cfg(loader(), session["label"])
+            cfg = resolve_ssh_cfg(loader(), session["label"], session["target_index"])
             redactor = _SSHStreamRedactor(cfg.get("jump_pass"))
             label = session["label"]
             if (
@@ -318,7 +360,7 @@ class TerminalManager:
                     closing = session["closing"]
                 data = adapter.recv_available()
                 if data:
-                    text = decoder.decode(data)
+                    text = ansi_filter.push(decoder.decode(data))
                     safe_text = redactor.push(text)
                     if safe_text:
                         self._emit(session, "stdout", safe_text)
@@ -334,7 +376,8 @@ class TerminalManager:
                     self._emit(session, "stderr", self._ssh_safe_text(str(exc), cfg))
         finally:
             tail = decoder.decode(b"", final=True)
-            safe_tail = redactor.push(tail, final=True)
+            filtered_tail = ansi_filter.push(tail, final=True)
+            safe_tail = redactor.push(filtered_tail, final=True)
             if safe_tail:
                 self._emit(session, "stdout", safe_tail)
             if adapter is not None:

@@ -137,7 +137,7 @@
       assert(ids.length === 6, `应有六个组件，实际 ${ids.join(",")}`);
       for (const id of ["stats", "calendar", "almanac", "market", "todo", "terminal"]) assert(card(id), `缺少组件 ${id}`);
       for (const id of ["cal-stock", "cal-kline-head", "cal-kline"]) assert(card("market").contains(document.getElementById(id)), `${id} 应位于 market`);
-      for (const id of ["terminal-status", "terminal-output", "terminal-prompt", "terminal-input", "terminal-ssh", "terminal-local", "terminal-interrupt", "terminal-reconnect", "terminal-clear"]) {
+      for (const id of ["terminal-status", "terminal-output", "terminal-prompt", "terminal-input", "terminal-target", "terminal-fullscreen", "terminal-local", "terminal-interrupt", "terminal-reconnect", "terminal-clear"]) {
         assert(document.getElementById(id), `缺少终端固定 ID ${id}`);
       }
       assert(document.querySelector("#dash-edit"), "应存在布局编辑按钮");

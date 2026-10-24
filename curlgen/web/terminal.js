@@ -23,6 +23,7 @@ class TerminalPanel {
     this.id = null;
     this.kind = "local";
     this.label = "";
+    this.targetIndex = null;
     this.status = "closed";
     this.cursor = 0;
     this.history = [];
@@ -40,7 +41,11 @@ class TerminalPanel {
     this.input = document.querySelector("#terminal-input");
     this.statusEl = document.querySelector("#terminal-status");
     this.promptEl = document.querySelector("#terminal-prompt");
+    this.card = document.querySelector('[data-component="terminal"]');
+    this.targetSelect = document.querySelector("#terminal-target");
+    this.fullscreenButton = document.querySelector("#terminal-fullscreen");
     this._bind();
+    this._renderTargets();
     this._setStatus("closed");
   }
 
@@ -55,27 +60,48 @@ class TerminalPanel {
       }
     });
     document.querySelector("#terminal-local").addEventListener("click", () => void this.openLocal());
-    document.querySelector("#terminal-ssh").addEventListener("click", (event) => {
-      event.stopPropagation();
-      this._showSSHMenu(event);
+    this.targetSelect.addEventListener("change", () => {
+      if (!this.targetSelect.value) return;
+      const option = this.targetSelect.selectedOptions[0];
+      void this.openSSH(option.dataset.label, Number(this.targetSelect.value));
+    });
+    this.fullscreenButton.addEventListener("click", () => this.toggleFullscreen());
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && this.card.classList.contains("terminal-maximized")) {
+        event.preventDefault();
+        this.toggleFullscreen(false);
+      }
     });
     document.querySelector("#terminal-interrupt").addEventListener("click", () => void this.interrupt());
     document.querySelector("#terminal-reconnect").addEventListener("click", () => void this.reconnect());
     document.querySelector("#terminal-clear").addEventListener("click", () => this.clear());
   }
 
-  _showSSHMenu(event) {
-    const ssh = typeof state !== "undefined" ? state.ssh : null;
-    const targets = (ssh && ssh.targets) || [];
-    if (!targets.length) {
-      toast("请先在 SSH 设置中配置堡垒机和目标机", "err");
-      return;
-    }
-    const items = targets.map((target) => {
+  _renderTargets() {
+    const targets = typeof state !== "undefined" && Array.isArray(state.sshTargets)
+      ? state.sshTargets : [];
+    this.targetSelect.textContent = "";
+    const placeholder = new Option(targets.length ? "选择 SSH 服务器" : "请先配置 SSH 服务器", "");
+    this.targetSelect.add(placeholder);
+    targets.forEach((target, index) => {
       const label = target.label || target.host;
-      return [`${label}(${target.host})`, () => void this.openSSH(label)];
+      const option = new Option(`${label}(${target.host})`, String(index));
+      option.dataset.label = label;
+      this.targetSelect.add(option);
     });
-    showCtxMenu(event.clientX, event.clientY, items);
+    this.targetSelect.disabled = !targets.length;
+    this.targetSelect.value = this.kind === "ssh" && this.targetIndex !== null
+      ? String(this.targetIndex) : "";
+  }
+
+  toggleFullscreen(force) {
+    const maximized = force === undefined
+      ? !this.card.classList.contains("terminal-maximized") : Boolean(force);
+    this.card.classList.toggle("terminal-maximized", maximized);
+    document.body.classList.toggle("terminal-fullscreen-open", maximized);
+    this.fullscreenButton.setAttribute("aria-pressed", String(maximized));
+    this.fullscreenButton.textContent = maximized ? "退出全屏" : "全屏";
+    if (maximized) this.output.scrollTop = this.output.scrollHeight;
   }
 
   _historyStep(direction) {
@@ -105,6 +131,7 @@ class TerminalPanel {
   }
 
   refresh() {
+    this._renderTargets();
     const visible = this._isVisible();
     if (visible === this._visible) return;
     this._visible = visible;
@@ -124,20 +151,23 @@ class TerminalPanel {
     return this._switch("local", "");
   }
 
-  openSSH(label) {
-    return this._switch("ssh", label || "");
+  openSSH(label, targetIndex = null) {
+    return this._switch("ssh", label || "", targetIndex);
   }
 
-  async _switch(kind, label) {
+  async _switch(kind, label, targetIndex = null) {
     const run = async () => {
       if (!await this.close()) return null;
       this.clear();
       this.cursor = 0;
       this.kind = kind;
       this.label = label;
+      this.targetIndex = targetIndex;
       this._setStatus("connecting");
       try {
-        const session = await terminalApi("/api/terminal/open", { kind, label: label || undefined });
+        const payload = { kind, label: label || undefined };
+        if (kind === "ssh" && targetIndex !== null) payload.target_index = targetIndex;
+        const session = await terminalApi("/api/terminal/open", payload);
         this.id = session.id;
         this.kind = session.kind || kind;
         this.label = session.label || label;
@@ -164,7 +194,7 @@ class TerminalPanel {
   }
 
   reconnect() {
-    return this.kind === "ssh" ? this.openSSH(this.label) : this.openLocal();
+    return this.kind === "ssh" ? this.openSSH(this.label, this.targetIndex) : this.openLocal();
   }
 
   _schedule(delay = this._pollDelay(), includeClosed = false) {
@@ -245,6 +275,8 @@ class TerminalPanel {
     this.statusEl.textContent = labels[status] || readyLabel;
     this.statusEl.dataset.status = status;
     this.promptEl.textContent = `${this.kind === "ssh" ? (this.label || "SSH") : "本地"}>`;
+    this.targetSelect.value = this.kind === "ssh" && this.targetIndex !== null
+      ? String(this.targetIndex) : "";
     this.input.disabled = !this.id || status !== "ready";
     document.querySelector("#terminal-interrupt").disabled = !this.id || status !== "ready";
   }

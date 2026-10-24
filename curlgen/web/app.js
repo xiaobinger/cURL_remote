@@ -2379,7 +2379,11 @@ async function saveEnvs() {
 
 /* ─────────── SSH 设置 ─────────── */
 async function openSshModal() {
-  state.ssh = await apiGet("/api/ssh");
+  const saved = await apiGet("/api/ssh");
+  state.ssh = {
+    ...saved,
+    targets: (saved.targets || []).map((target) => ({ ...target })),
+  };
   $("ssh-jh").value = state.ssh.jump_host || "";
   $("ssh-jp").value = state.ssh.jump_port || "";
   $("ssh-ju").value = state.ssh.jump_user || "";
@@ -2446,6 +2450,7 @@ async function saveSsh() {
     state.ssh.targets = targets;
     state.sshTargets = targets;
     updateConnBadge();
+    if (window.terminalPanel) window.terminalPanel.refresh();
     toast("SSH 配置已保存 ✓", "ok");
     closeModal();
   } else toast("保存失败", "err");
@@ -3026,6 +3031,7 @@ async function init() {
     state.envs = j.envs || [];
     state.saved = j.saved || { groups: [] };
     state.ssh = j.ssh || {};
+    state.sshTargets = state.ssh.targets || [];
     state.ai = j.ai || {};
     state.stocks = j.stocks || [{ code: "sh000001", name: "上证指数" }];
     // UI 偏好以文件为准（WebEngine localStorage 重启可能丢失，仅作启动初期的临时来源）
