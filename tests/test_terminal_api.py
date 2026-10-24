@@ -15,6 +15,7 @@ _DEFAULT_TOKEN = object()
 class FakeTerminals:
     def __init__(self):
         self.calls = []
+        self.open_extra = {}
         self.event_response = {
             "session": {"id": "t1", "kind": "local", "label": "", "status": "ready"},
             "events": [{"seq": 1, "type": "stdout", "text": "ready"}],
@@ -23,7 +24,9 @@ class FakeTerminals:
 
     def open(self, kind="local", label=None):
         self.calls.append(("open", kind, label))
-        return {"id": "t1", "kind": kind, "label": label, "status": "connecting"}
+        response = {"id": "t1", "kind": kind, "label": label, "status": "connecting"}
+        response.update(self.open_extra)
+        return response
 
     def write(self, session_id, text):
         self.calls.append(("write", session_id, text))
@@ -139,6 +142,50 @@ class TerminalAPIHTTPTests(unittest.TestCase):
                     self.assertEqual(self.terminals.calls, [])
                     self.assertNotIn(b"secret", body)
 
+    def test_non_ascii_token_is_forbidden_for_get_and_post(self):
+        requests = [
+            ("GET", "/api/terminal/events?id=t1", None),
+            ("POST", "/api/terminal/open", {}),
+        ]
+        for method, path, payload in requests:
+            with self.subTest(method=method, path=path):
+                self.terminals.calls.clear()
+                status, _, response, _ = self.assert_json_response(
+                    method, path, payload, token="é"
+                )
+                self.assertEqual(status, 403)
+                self.assertEqual(response, {"error": "forbidden"})
+                self.assertEqual(self.terminals.calls, [])
+
+    def test_terminal_post_requires_a_json_object_before_manager_call(self):
+        paths = [
+            "/api/terminal/open",
+            "/api/terminal/input",
+            "/api/terminal/interrupt",
+            "/api/terminal/close",
+            "/api/terminal/unknown",
+        ]
+        invalid_payloads = [
+            b'{"kind":',
+            b"\xff",
+            b"",
+            b"[]",
+            b'"scalar"',
+            b"null",
+            b"1",
+            b"true",
+        ]
+        for path in paths:
+            for payload in invalid_payloads:
+                with self.subTest(path=path, payload=payload):
+                    self.terminals.calls.clear()
+                    status, _, response, _ = self.assert_json_response(
+                        "POST", path, payload
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertEqual(response, {"error": "invalid json"})
+                    self.assertEqual(self.terminals.calls, [])
+
     def test_open_route_passes_only_kind_and_label(self):
         status, headers, response, body = self.assert_json_response(
             "POST",
@@ -161,6 +208,25 @@ class TerminalAPIHTTPTests(unittest.TestCase):
         self.assertEqual(self.terminals.calls, [("open", "ssh", "生产A")])
         self.assertNotIn(b"server-secret", body)
         self.assertNotIn(b"jump_pass", body)
+
+    def test_open_route_filters_sensitive_fields_from_manager_response(self):
+        self.terminals.open_extra = {
+            "jump_pass": "manager-secret",
+            "secret": "manager-secret",
+        }
+
+        status, _, response, body = self.assert_json_response(
+            "POST", "/api/terminal/open", {"kind": "ssh", "label": "生产A"}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            response,
+            {"id": "t1", "kind": "ssh", "label": "生产A", "status": "connecting"},
+        )
+        self.assertNotIn(b"manager-secret", body)
+        self.assertNotIn(b"jump_pass", body)
+        self.assertNotIn(b"secret", body)
 
     def test_open_route_defaults_to_local(self):
         status, _, response, _ = self.assert_json_response(
@@ -270,6 +336,17 @@ class TerminalAPIHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(dict(headers)["Access-Control-Allow-Origin"], "*")
         self.assertEqual(json.loads(body.decode("utf-8")), [])
+
+    def test_non_terminal_post_keeps_lenient_malformed_json_handling(self):
+        self.app.history.append({"url": "existing"})
+
+        status, _, response, _ = self.assert_json_response(
+            "POST", "/api/clear_history", b'{"ignored":', token=""
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response, {"ok": True})
+        self.assertEqual(self.app.history, [])
 
 
 if __name__ == "__main__":

@@ -46,7 +46,8 @@ logger = logging.getLogger("curlgen.web_ui")
 
 
 def terminal_token_valid(expected, supplied):
-    return bool(expected and supplied and hmac.compare_digest(expected, supplied))
+    return bool(expected and supplied and hmac.compare_digest(
+        expected.encode("utf-8"), supplied.encode("utf-8")))
 
 
 # /api/ui_prefs 读-改-写串行化（ThreadingHTTPServer 并发请求会丢更新）
@@ -209,6 +210,15 @@ class _ApiHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
+    def _read_terminal_json(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b""
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
+
     def log_message(self, fmt, *args):
         logger.debug("api %s - %s", self.address_string(), fmt % args)
 
@@ -297,7 +307,13 @@ class _ApiHandler(BaseHTTPRequestHandler):
                     self.app.terminal_token, self.headers.get("X-CurlGen-Token")):
                 self._send_json({"error": "forbidden"}, 403)
                 return
-            data = self._read_json()
+            if path.startswith("/api/terminal/"):
+                data = self._read_terminal_json()
+                if data is None:
+                    self._send_json({"error": "invalid json"}, 400)
+                    return
+            else:
+                data = self._read_json()
             if path == "/api/terminal/open":
                 self._send_json(self._terminal_open(data))
             elif path == "/api/terminal/input":
@@ -374,10 +390,11 @@ class _ApiHandler(BaseHTTPRequestHandler):
 
     # ── 业务 ──
     def _terminal_open(self, payload):
-        return self.app.terminals.open(
+        session = self.app.terminals.open(
             kind=payload.get("kind") or "local",
             label=payload.get("label") or None,
         )
+        return {key: session[key] for key in ("id", "kind", "label", "status")}
 
     def _terminal_events(self):
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
