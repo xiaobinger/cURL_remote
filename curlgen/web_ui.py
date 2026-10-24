@@ -790,13 +790,13 @@ class WebCurlGenerator(QMainWindow):
 
     # ──────────────────── 执行 ────────────────────
     def _on_exec_progress(self, tag, text):
-        # SSH 模式为剥离 curl -w 尾注：stdout 驻留最后一行缓冲，执行结束时统一处理
+        # SSH 模式只驻留最后一个完整或未完成行；执行结束才能确认唯一真实尾注。
         if self._exec_mode == "ssh" and tag == "stdout":
             self._ssh_hold += text
-            if SSH_META_RE.search(self._ssh_hold):
-                self._flush_ssh_hold()
-                return
-            idx = self._ssh_hold.rfind("\n")
+            line_end = len(self._ssh_hold)
+            if self._ssh_hold.endswith("\n"):
+                line_end -= 1
+            idx = self._ssh_hold.rfind("\n", 0, line_end)
             if idx >= 0:
                 out, self._ssh_hold = self._ssh_hold[:idx + 1], self._ssh_hold[idx + 1:]
                 if out:
@@ -805,13 +805,15 @@ class WebCurlGenerator(QMainWindow):
         self.push_event({"type": "output", "tag": tag, "text": text})
 
     def _flush_ssh_hold(self):
-        """SSH 执行结束：解析驻留缓冲里的 -w 尾注，推送 http_resp 事件并回显剩余内容"""
+        """执行结束时仅解析整个末行尾注；同形正文按原文输出，重复 flush 不发事件。"""
         hold, self._ssh_hold = self._ssh_hold, ""
         if not hold:
             return
-        m = SSH_META_RE.search(hold)
+        candidate = hold[:-1] if hold.endswith("\n") else hold
+        if candidate.endswith("\r"):
+            candidate = candidate[:-1]
+        m = SSH_META_RE.fullmatch(candidate)
         if m:
-            hold = SSH_META_RE.sub("", hold).strip("\r\n")
             try:
                 self.push_event({
                     "type": "http_resp",
@@ -823,10 +825,10 @@ class WebCurlGenerator(QMainWindow):
                     "content_type": m.group(4).strip(),
                     "url": "",
                 })
+                return
             except ValueError:
                 logger.warning("SSH 尾注解析失败: %s", m.group(0))
-        if hold:
-            self.push_event({"type": "output", "tag": "stdout", "text": hold})
+        self.push_event({"type": "output", "tag": "stdout", "text": hold})
 
     @staticmethod
     def _parse_timeout(data):

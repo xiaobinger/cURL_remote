@@ -91,6 +91,91 @@ class SSHExecutionEventTests(unittest.TestCase):
         self.assertNotIn("__CG_META__", output)
 
 
+class SSHExecutionEventContractTests(unittest.TestCase):
+    def setUp(self):
+        self.app = WebCurlGenerator.__new__(WebCurlGenerator)
+        self.app.events = []
+        self.app._exec_mode = "ssh"
+        self.app._ssh_hold = ""
+
+    def emit(self, *chunks):
+        for chunk in chunks:
+            self.app._on_exec_progress("stdout", chunk)
+        self.app._flush_ssh_hold()
+        return self.app.events
+
+    def assert_events(self, events, expected_output, status=200):
+        expected = [
+            {"type": "output", "tag": "stdout", "text": text}
+            for text in expected_output
+        ]
+        expected.append({
+            "type": "http_resp",
+            "status": status,
+            "reason": "",
+            "headers": [],
+            "elapsed_ms": 125,
+            "size": 577,
+            "content_type": "text/html",
+            "url": "",
+        })
+        self.assertEqual(events, expected)
+
+    def test_body_and_metadata_same_chunk_emit_output_before_http_response(self):
+        events = self.emit("response body\n__CG_META__:200:0.125:577:text/html")
+
+        self.assert_events(events, ["response body\n"])
+
+    def test_metadata_newline_in_next_chunk_does_not_leak_empty_output(self):
+        events = self.emit(
+            "response body\n__CG_META__:200:0.125:577:text/html",
+            "\n",
+        )
+
+        self.assert_events(events, ["response body\n"])
+
+    def test_lookalike_body_line_is_preserved_before_unique_final_metadata(self):
+        cases = [
+            (
+                "coalesced",
+                ["before\n__CG_META__:201:0.1:1:text/plain\n"
+                 "after\n__CG_META__:200:0.125:577:text/html\n"],
+                ["before\n__CG_META__:201:0.1:1:text/plain\nafter\n"],
+            ),
+            (
+                "split",
+                ["before\n__CG_META__:201:0.1:1:text/plain\n",
+                 "after\n__CG_META__:200:0.125:577:text/html\n"],
+                ["before\n", "__CG_META__:201:0.1:1:text/plain\nafter\n"],
+            ),
+            (
+                "one_character_chunks",
+                list("before\n__CG_META__:201:0.1:1:text/plain\n"
+                     "after\n__CG_META__:200:0.125:577:text/html\n"),
+                ["before\n", "__CG_META__:201:0.1:1:text/plain\n", "after\n"],
+            ),
+        ]
+        for name, chunks, expected_output in cases:
+            with self.subTest(name=name):
+                self.setUp()
+                self.assert_events(self.emit(*chunks), expected_output)
+
+    def test_ordinary_multiline_output_preserves_exact_text_and_event_order(self):
+        events = self.emit("first\nsec", "ond\nthird")
+
+        self.assertEqual(events, [
+            {"type": "output", "tag": "stdout", "text": "first\n"},
+            {"type": "output", "tag": "stdout", "text": "second\n"},
+            {"type": "output", "tag": "stdout", "text": "third"},
+        ])
+
+    def test_final_flush_does_not_repeat_http_response_or_output(self):
+        events = self.emit("body\n__CG_META__:200:0.125:577:text/html\n")
+        self.app._flush_ssh_hold()
+
+        self.assert_events(events, ["body\n"])
+
+
 class TerminalAPIHTTPTests(unittest.TestCase):
     TOKEN = "test-terminal-token"
 
