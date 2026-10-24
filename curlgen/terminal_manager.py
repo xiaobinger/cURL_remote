@@ -48,7 +48,13 @@ class TerminalManager:
         if kind == "local":
             self._start_local(session)
         else:
-            threading.Thread(target=self._start_ssh, args=(session,), daemon=True).start()
+            with session["startup_lock"]:
+                reader = threading.Thread(
+                    target=self._start_ssh, args=(session,), daemon=True
+                )
+                with self._lock:
+                    session["readers"] = [reader]
+                reader.start()
         return self._info(session)
 
     def write(self, session_id, text):
@@ -76,7 +82,7 @@ class TerminalManager:
                 except (BrokenPipeError, OSError, ValueError) as exc:
                     raise RuntimeError("terminal input is unavailable") from exc
             elif adapter is not None:
-                adapter.write(text)
+                adapter.send(text)
             else:
                 raise RuntimeError("terminal input is unavailable")
 
@@ -108,7 +114,7 @@ class TerminalManager:
         if process is not None:
             self._terminate_process(process)
         elif adapter is not None:
-            adapter.write(b"\x03")
+            adapter.send(b"\x03")
 
     def close(self, session_id):
         with self._lock:
@@ -127,13 +133,18 @@ class TerminalManager:
                 self._close_stream(process.stdin)
             self._finish_local(session)
             return
-        with self._lock:
-            adapter = session["adapter"]
+        with session["startup_lock"]:
+            with self._lock:
+                adapter = session["adapter"]
+                readers = list(session["readers"])
+                was_ready = session["status"] == "ready"
         if adapter is not None:
-            try:
-                adapter.close()
-            except (OSError, ValueError):
-                pass
+            self._close_adapter(adapter)
+        if was_ready:
+            current = threading.current_thread()
+            for reader in readers:
+                if reader is not current:
+                    reader.join(timeout=self.READER_JOIN_TIMEOUT)
         self._finish(session)
 
     def cleanup_idle(self, max_age=1800):
@@ -196,9 +207,89 @@ class TerminalManager:
             ).start()
 
     def _start_ssh(self, session):
-        self._emit(session, "status", "error")
-        self._emit(session, "stderr", "SSH sessions are not implemented")
-        self._finish(session)
+        adapter = None
+        cfg = {}
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        try:
+            loader = self._ssh_config_loader
+            if loader is None:
+                from curlgen.config import load_ssh_config
+                loader = load_ssh_config
+            from curlgen.config import resolve_ssh_cfg
+            cfg = resolve_ssh_cfg(loader(), session["label"])
+            label = session["label"]
+            if (
+                not label
+                or label != cfg.get("target_label")
+                or not cfg.get("target_host")
+            ):
+                with self._lock:
+                    if session["closed"] or session["closing"]:
+                        return
+                    self._emit(session, "status", "error")
+                    self._emit(session, "stderr", "error: 目标机配置不存在")
+                return
+
+            factory = self._session_factory
+            if factory is None:
+                from curlgen.ssh_executor import GateShellSession
+
+                def factory(resolved):
+                    return GateShellSession(
+                        resolved["jump_host"],
+                        int(resolved.get("jump_port") or 22),
+                        resolved["jump_user"],
+                        resolved["jump_pass"],
+                    )
+
+            adapter = factory(cfg)
+            with self._lock:
+                should_close = session["closed"] or session["closing"]
+                if not should_close:
+                    session["adapter"] = adapter
+            if should_close:
+                return
+
+            adapter.open()
+            with self._lock:
+                should_close = session["closed"] or session["closing"]
+            if should_close:
+                return
+            adapter.connect_host(cfg["target_host"])
+            with self._lock:
+                should_close = session["closed"] or session["closing"]
+                if not should_close:
+                    session["status"] = "ready"
+                    self._emit(session, "status", "ready")
+            if should_close:
+                return
+
+            while True:
+                with self._lock:
+                    if session["closed"] or session["closing"]:
+                        break
+                if adapter.closed:
+                    break
+                data = adapter.recv_available()
+                if data:
+                    text = decoder.decode(data)
+                    if text:
+                        self._emit(session, "stdout", self._ssh_safe_text(text, cfg))
+                else:
+                    time.sleep(0.05)
+        except Exception as exc:
+            with self._lock:
+                should_report = not session["closed"] and not session["closing"]
+                if should_report:
+                    self._emit(session, "status", "error")
+                    self._emit(session, "stderr", self._ssh_safe_text(str(exc), cfg))
+        finally:
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                self._emit(session, "stdout", self._ssh_safe_text(tail, cfg))
+            if adapter is not None:
+                self._close_adapter(adapter)
+            self._finish(session)
 
     def _read_local(self, session, stream, stream_name):
         decoder = codecs.getincrementaldecoder(session["encoding"])(errors="replace")
@@ -283,6 +374,18 @@ class TerminalManager:
     @staticmethod
     def _local_encoding():
         return locale.getpreferredencoding(False) if os.name == "nt" else "utf-8"
+
+    @staticmethod
+    def _ssh_safe_text(text, cfg):
+        password = str(cfg.get("jump_pass") or "")
+        return text.replace(password, "[已隐藏]") if password else text
+
+    @staticmethod
+    def _close_adapter(adapter):
+        try:
+            adapter.close()
+        except Exception:
+            pass
 
     @staticmethod
     def _close_stream(stream):

@@ -111,10 +111,39 @@ class GateShellSession:
         self.stop_event = stop_event
         self._transport = None
         self._chan = None
+        self._channel_lock = threading.RLock()
         self._in_target = False
         self._boot_text = ""   # open() 阶段读到的菜单文本，供 list_hosts() 复用
 
     # ── 底层 ──
+    def send(self, text):
+        """向持久交互通道完整写入一段输入。"""
+        data = text.encode("utf-8") if isinstance(text, str) else bytes(text)
+        with self._channel_lock:
+            if self._chan is None or self._chan.closed:
+                raise ExecutionError("SSH 会话已断开")
+            remaining = data
+            while remaining:
+                sent = self._chan.send(remaining)
+                if sent is None or sent <= 0:
+                    raise ExecutionError("SSH 会话输入不可用")
+                remaining = remaining[sent:]
+
+    def recv_available(self):
+        """读取当前已到达的数据；无数据或通道已关闭时返回空字节串。"""
+        with self._channel_lock:
+            if self._chan is None or self._chan.closed or not self._chan.recv_ready():
+                return b""
+            try:
+                return self._chan.recv(65536)
+            except socket.timeout:
+                return b""
+
+    @property
+    def closed(self):
+        with self._channel_lock:
+            return self._chan is None or self._chan.closed
+
     def _log(self, text):
         """状态类消息（以 [info] 形式展示）"""
         logger.info("[gate] %s", text)
@@ -404,15 +433,16 @@ class GateShellSession:
         return exit_code, body
 
     def close(self):
-        for obj in (self._chan, self._transport):
-            if obj is not None:
-                try:
-                    obj.close()
-                except Exception as e:
-                    logger.debug("关闭 GateShell 对象失败: %s", e)
-        self._chan = None
-        self._transport = None
-        self._in_target = False
+        with self._channel_lock:
+            for obj in (self._chan, self._transport):
+                if obj is not None:
+                    try:
+                        obj.close()
+                    except Exception as e:
+                        logger.debug("关闭 GateShell 对象失败: %s", e)
+            self._chan = None
+            self._transport = None
+            self._in_target = False
 
 
 def _extract_body(raw, start_mark, end_mark):
