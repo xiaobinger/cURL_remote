@@ -1,6 +1,7 @@
 import codecs
 import locale
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -34,7 +35,10 @@ class TerminalManager:
             "adapter": None,
             "encoding": self._local_encoding(),
             "closed": False,
+            "closing": False,
             "last_used": time.monotonic(),
+            "write_lock": threading.Lock(),
+            "readers": [],
         }
         with self._lock:
             self._sessions[sid] = session
@@ -48,23 +52,30 @@ class TerminalManager:
         with self._lock:
             session = self._sessions[session_id]
             session["last_used"] = time.monotonic()
-            if session["closed"]:
-                raise RuntimeError("terminal session is closed")
-            process = session["process"]
-            adapter = session["adapter"]
-        if process is not None:
-            if not text.endswith(("\n", "\r")):
-                text += "\n"
-            data = text.encode(session["encoding"], errors="replace")
-            try:
-                process.stdin.write(data)
-                process.stdin.flush()
-            except (BrokenPipeError, OSError, ValueError) as exc:
-                raise RuntimeError("terminal input is unavailable") from exc
-        elif adapter is not None:
-            adapter.write(text)
-        else:
-            raise RuntimeError("terminal input is unavailable")
+        with session["write_lock"]:
+            with self._lock:
+                if session["closed"] or session["closing"]:
+                    raise RuntimeError("terminal session is closed")
+                process = session["process"]
+                adapter = session["adapter"]
+            if process is not None:
+                if not text.endswith(("\n", "\r")):
+                    text += "\n"
+                data = text.encode(session["encoding"], errors="replace")
+                try:
+                    remaining = memoryview(data)
+                    while remaining:
+                        written = process.stdin.write(remaining)
+                        if written is None or written <= 0:
+                            raise OSError("terminal input write made no progress")
+                        remaining = remaining[written:]
+                    process.stdin.flush()
+                except (BrokenPipeError, OSError, ValueError) as exc:
+                    raise RuntimeError("terminal input is unavailable") from exc
+            elif adapter is not None:
+                adapter.write(text)
+            else:
+                raise RuntimeError("terminal input is unavailable")
 
     def events(self, session_id, since=0):
         self.cleanup_idle()
@@ -85,10 +96,12 @@ class TerminalManager:
     def interrupt(self, session_id):
         with self._lock:
             session = self._sessions[session_id]
-            if session["closed"]:
+            if session["closed"] or session["closing"]:
                 return
             process = session["process"]
             adapter = session["adapter"]
+            if process is not None:
+                session["closing"] = True
         if process is not None:
             self._terminate_process(process)
         elif adapter is not None:
@@ -97,17 +110,23 @@ class TerminalManager:
     def close(self, session_id):
         with self._lock:
             session = self._sessions[session_id]
+            if session["closed"] or session["closing"]:
+                return
+            session["closing"] = True
             process = session["process"]
             adapter = session["adapter"]
-            self._finish(session)
         if process is not None:
             self._terminate_process(process)
             self._close_stream(process.stdin)
-        if adapter is not None:
+            self._finish_local(session)
+        elif adapter is not None:
             try:
                 adapter.close()
             except (OSError, ValueError):
                 pass
+            self._finish(session)
+        else:
+            self._finish(session)
 
     def cleanup_idle(self, max_age=1800):
         now = time.monotonic()
@@ -123,7 +142,10 @@ class TerminalManager:
         with self._lock:
             session_ids = list(self._sessions)
         for session_id in session_ids:
-            self.close(session_id)
+            try:
+                self.close(session_id)
+            except KeyError:
+                continue
 
     def _start_local(self, session):
         command = [os.environ.get("COMSPEC", "cmd.exe"), "/Q"] if os.name == "nt" else ["/bin/sh"]
@@ -134,6 +156,7 @@ class TerminalManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0,
+                start_new_session=os.name != "nt",
             )
         except OSError as exc:
             self._emit(session, "status", "error")
@@ -141,19 +164,31 @@ class TerminalManager:
             self._finish(session)
             return
         with self._lock:
-            if session["closed"]:
-                self._terminate_process(process)
-                return
-            session["process"] = process
-            session["status"] = "ready"
-            self._emit(session, "status", "ready")
+            should_close = session["closed"] or session["closing"]
+            if not should_close:
+                session["process"] = process
+                session["status"] = "ready"
+                self._emit(session, "status", "ready")
+        if should_close:
+            self._terminate_process(process)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                self._close_stream(stream)
+            self._finish(session)
+            return
+        readers = []
         for stream_name in ("stdout", "stderr"):
             stream = getattr(process, stream_name)
-            threading.Thread(
-                target=self._read_local,
-                args=(session, stream, stream_name),
-                daemon=True,
-            ).start()
+            readers.append(
+                threading.Thread(
+                    target=self._read_local,
+                    args=(session, stream, stream_name),
+                    daemon=True,
+                )
+            )
+        with self._lock:
+            session["readers"] = readers
+        for reader in readers:
+            reader.start()
         threading.Thread(target=self._wait_local, args=(session, process), daemon=True).start()
 
     def _start_ssh(self, session):
@@ -183,8 +218,17 @@ class TerminalManager:
         try:
             process.wait()
         finally:
-            self._finish(session)
             self._close_stream(process.stdin)
+            self._finish_local(session)
+
+    def _finish_local(self, session):
+        with self._lock:
+            readers = list(session["readers"])
+        current = threading.current_thread()
+        for reader in readers:
+            if reader is not current:
+                reader.join()
+        self._finish(session)
 
     def _emit(self, session, event_type, text):
         encoded = text.encode("utf-8")
@@ -235,10 +279,10 @@ class TerminalManager:
 
     @staticmethod
     def _terminate_process(process):
-        if process.poll() is not None:
-            return
-        try:
-            if os.name == "nt":
+        if os.name == "nt":
+            if process.poll() is not None:
+                return
+            try:
                 subprocess.run(
                     ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                     stdout=subprocess.DEVNULL,
@@ -246,12 +290,29 @@ class TerminalManager:
                     check=False,
                     timeout=5,
                 )
-            else:
-                process.terminate()
-            process.wait(timeout=5)
-        except (OSError, subprocess.SubprocessError):
-            try:
-                process.kill()
                 process.wait(timeout=5)
             except (OSError, subprocess.SubprocessError):
-                pass
+                try:
+                    process.kill()
+                    process.wait(timeout=5)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            process.wait(timeout=5)
+            return
+        except (OSError, subprocess.SubprocessError):
+            pass
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            process.kill()
+            process.wait(timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
