@@ -1504,29 +1504,45 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 }
 .todo-del:hover { color: var(--red); background: var(--red-border); }
 
-/* 终端卡片（后续任务接管会话与服务器切换） */
+/* 终端卡片：持久输出、紧凑工具栏与可见状态 */
 .terminal-status { margin-left: auto; color: var(--text-3); font: 400 11px var(--font-ui); }
+.terminal-status[data-status="ready"] { color: var(--green); }
+.terminal-status[data-status="connecting"] { color: var(--yellow); }
+.terminal-status[data-status="error"] { color: var(--red); }
 .terminal-output {
-  height: 170px; overflow: auto; padding: 10px 12px;
-  border: 1px solid var(--border-soft); border-radius: var(--r-sm);
-  background: var(--bg-input); color: var(--text-2);
-  font: 12px/1.55 var(--font-mono); white-space: pre-wrap; word-break: break-word;
+  height: clamp(220px, 28vh, 320px); min-height: 220px; overflow: auto;
+  padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  background: rgba(3, 8, 18, .82); color: #bdcbe2;
+  font: 12px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
 }
 .terminal-input-row {
   display: flex; align-items: center; gap: 8px; margin-top: 8px;
   padding: 7px 10px; border: 1px solid var(--border-soft); border-radius: var(--r-sm);
   background: var(--bg-input); color: var(--accent); font: 12px var(--font-mono);
+  transition: border-color .15s;
+}
+.terminal-input-row:focus-within { border-color: var(--accent); }
+#terminal-prompt {
+  flex: none; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .terminal-input-row input {
   flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
   color: var(--text-1); font: 12px var(--font-mono);
 }
-.terminal-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.terminal-input-row input:disabled { opacity: .55; }
+.terminal-toolbar {
+  display: flex; flex-wrap: nowrap; gap: 6px; margin-top: 8px;
+  overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+}
+.terminal-toolbar::-webkit-scrollbar { display: none; }
 .terminal-toolbar button {
-  padding: 4px 10px; border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  flex: none; min-height: 26px; padding: 3px 10px;
+  border: 1px solid var(--border-soft); border-radius: var(--r-sm);
   background: var(--bg-input); color: var(--text-2); font: 11px var(--font-ui); cursor: pointer;
 }
-.terminal-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+.terminal-toolbar button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.terminal-toolbar button:disabled { opacity: .45; cursor: default; }
 
 @media (max-width: 1100px) {
   .dash-stats { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }

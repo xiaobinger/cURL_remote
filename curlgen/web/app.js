@@ -1492,6 +1492,10 @@ function syncDashboard() {
   $("command-bar").classList.toggle("hidden", show);
   $("workspace").classList.toggle("hidden", show);
   if (show) renderDashboard();
+  if (window.terminalPanel) {
+    window.terminalPanel.refresh();
+    if (show && isDashboardComponentVisible("terminal")) window.terminalPanel.ensureLocal();
+  }
 }
 
 function renderDashboard() {
@@ -1513,6 +1517,9 @@ function renderDashboard() {
   if (isDashboardComponentVisible("market")) {
     loadAstock();
     loadKline();
+  }
+  if (isDashboardComponentVisible("terminal") && window.terminalPanel) {
+    window.terminalPanel.ensureLocal();
   }
 }
 

@@ -263,18 +263,18 @@
       </div>
 
       <div class="dash-card terminal-card" data-component="terminal">
-        <div class="dash-card-title">终端 <span id="terminal-status" class="terminal-status">未连接</span></div>
-        <div id="terminal-output" class="terminal-output" aria-live="polite"></div>
+        <div class="dash-card-title">终端 <span id="terminal-status" class="terminal-status">已断开</span></div>
+        <div id="terminal-output" class="terminal-output" role="log" aria-live="polite" aria-relevant="additions text"></div>
         <div class="terminal-input-row">
           <span id="terminal-prompt">本地&gt;</span>
-          <input id="terminal-input" autocomplete="off" spellcheck="false" placeholder="输入命令，Enter 执行">
+          <input id="terminal-input" aria-label="终端命令" autocomplete="off" spellcheck="false" placeholder="输入命令，Enter 执行">
         </div>
-        <div class="terminal-toolbar">
-          <button id="terminal-ssh" title="登录 SSH">SSH</button>
-          <button id="terminal-local" title="切回本地">本地</button>
-          <button id="terminal-interrupt">中断</button>
-          <button id="terminal-reconnect">重连</button>
-          <button id="terminal-clear">清屏</button>
+        <div class="terminal-toolbar" aria-label="终端操作">
+          <button type="button" id="terminal-ssh" title="登录 SSH">SSH</button>
+          <button type="button" id="terminal-local" title="切回本地">本地</button>
+          <button type="button" id="terminal-interrupt">中断</button>
+          <button type="button" id="terminal-reconnect">重连</button>
+          <button type="button" id="terminal-clear">清屏</button>
         </div>
       </div>
     </div>
