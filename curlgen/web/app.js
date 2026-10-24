@@ -45,6 +45,7 @@ const state = {
   vars: {},          // 脚本会话变量
   executing: false,
   eventCursor: 0,
+  dashboard: null,  // 文件持久化的六组件布局
   // ── 响应 ──
   respRaw: "",
   respCode: null,
@@ -1474,8 +1475,14 @@ const dash = {
   klineChart: null,    // ECharts 实例（复用）
   todos: [],           // 全部待办（后端持久化）
 };
+let dashboardLayout = null;
 
 function isDashboard() { return state.tabs.length === 0; }
+function isDashboardComponentVisible(id) {
+  if (!dashboardLayout) return true;
+  const item = dashboardLayout.items.find((entry) => entry.id === id);
+  return !!item && item.visible;
+}
 
 function syncDashboard() {
   const el = $("dashboard");
@@ -1496,13 +1503,17 @@ function renderDashboard() {
   $("dash-greeting").textContent = `${greet}，星轨控制台`;
   const week = "日一二三四五六"[now.getDay()];
   $("dash-date").textContent = `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 ${now.getDate()} 日 · 星期${week}`;
-  renderDashStats();
-  renderCalendar();
-  renderAlmanac();
-  loadTodos();
-  loadHolidays(dash.year);
-  loadAstock();
-  loadKline();
+  if (isDashboardComponentVisible("stats")) renderDashStats();
+  if (isDashboardComponentVisible("calendar")) {
+    renderCalendar();
+    loadHolidays(dash.year);
+  }
+  if (isDashboardComponentVisible("almanac")) renderAlmanac();
+  if (isDashboardComponentVisible("todo")) loadTodos();
+  if (isDashboardComponentVisible("market")) {
+    loadAstock();
+    loadKline();
+  }
 }
 
 function renderDashStats() {
@@ -1648,7 +1659,7 @@ function curStock() {
 
 /* 行情条（跟随日历选中日 + 当前标的；非交易日 / 取数失败则隐藏，当天显示实时价且不缓存） */
 async function loadAstock() {
-  if (!dash.sel) return;
+  if (!dash.sel || !isDashboardComponentVisible("market")) return;
   const pad = (n) => String(n).padStart(2, "0");
   const code = curStock().code;
   const key = `${code}|${dash.sel.y}-${pad(dash.sel.m)}-${pad(dash.sel.d)}`;
@@ -1712,7 +1723,7 @@ function switchStock(code) {
 
 /* 月 K 线图（跟随日历选中日所在月份 + 当前标的；当月不缓存，无数据隐藏；点击蜡烛联动选中日） */
 async function loadKline() {
-  if (!dash.sel) return;
+  if (!dash.sel || !isDashboardComponentVisible("market")) return;
   const pad = (n) => String(n).padStart(2, "0");
   const code = curStock().code;
   const mk = `${code}|${dash.sel.y}-${pad(dash.sel.m)}`;
@@ -1862,8 +1873,9 @@ function renderKline() {
   }
 }
 
-/* 待办（跟随日历选中日；当日无待办则隐藏卡片） */
+/* 待办（跟随日历选中日；空列表仍保留组件，显隐仅由布局控制） */
 async function loadTodos() {
+  if (!isDashboardComponentVisible("todo")) return;
   const j = await apiGet("/api/todos");
   if (j && j.todos) dash.todos = j.todos;
   renderTodos();
@@ -1875,11 +1887,13 @@ function renderTodos() {
   const pad = (n) => String(n).padStart(2, "0");
   const key = `${dash.sel.y}-${pad(dash.sel.m)}-${pad(dash.sel.d)}`;
   const items = dash.todos.filter((t) => t.date === key);
-  if (!items.length) { card.classList.add("hidden"); return; }
-  card.classList.remove("hidden");
   $("todo-date").textContent = `${dash.sel.m} 月 ${dash.sel.d} 日`;
   const box = $("todo-list");
   box.innerHTML = "";
+  if (!items.length) {
+    box.innerHTML = '<div class="todo-empty">当日暂无待办</div>';
+    return;
+  }
   items.forEach((t) => {
     const row = document.createElement("div");
     row.className = "todo-item" + (t.done ? " done" : "");
@@ -2996,7 +3010,6 @@ async function init() {
     if (!THEMES.some((t) => t.id === savedTheme)) savedTheme = "dark";
     applyTheme(savedTheme, false);
     bindEvents();
-    newTab();
 
     const j = await apiGet("/api/state");
     if (j.error) {
@@ -3015,6 +3028,9 @@ async function init() {
     }
     const prefStock = ui.stock || (() => { try { return localStorage.getItem("cg-stock"); } catch (e) { return null; } })();
     if (prefStock && state.stocks.some((s) => s.code === prefStock)) state.stockCode = prefStock;
+    state.dashboard = normalize_dashboard_layout(ui.dashboard);
+    dashboardLayout = new DashboardLayout();
+    dashboardLayout.mount(state.dashboard);
     state.ssh_ready = !!j.ssh_ready;
     if (j.logo) $("brand-logo").src = j.logo;
     renderEnvSelect();
@@ -3022,6 +3038,7 @@ async function init() {
     renderSaved();
     refreshHistory();
     refreshPreview();
+    syncDashboard();
     toast("星轨控制台已就绪 ⚡", "ok");
 }
 

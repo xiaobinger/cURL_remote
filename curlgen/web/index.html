@@ -212,13 +212,20 @@
         <div class="dash-title" id="dash-greeting">星轨控制台</div>
         <div class="dash-sub" id="dash-date"></div>
       </div>
-      <button class="btn btn-exec" id="dash-new">＋ 新建请求</button>
+      <div class="dash-head-actions">
+        <button class="btn btn-ghost dash-edit-control" id="dash-reset">恢复默认</button>
+        <button class="btn btn-ghost" id="dash-edit" aria-pressed="false">编辑布局</button>
+        <button class="btn btn-exec" id="dash-new">＋ 新建请求</button>
+      </div>
     </div>
-
-    <div class="dash-stats" id="dash-stats"></div>
+    <div class="dash-add-components dash-edit-control" id="dash-add-components" aria-label="重新添加隐藏组件"></div>
 
     <div class="dash-grid">
-      <div class="dash-card dash-calendar-card">
+      <div class="dash-card stats-card" data-component="stats">
+        <div class="dash-stats" id="dash-stats"></div>
+      </div>
+
+      <div class="dash-card dash-calendar-card" data-component="calendar">
         <div class="dash-card-title">
           <button class="btn btn-mini" id="cal-prev" title="上一月">‹</button>
           <span id="cal-title"></span>
@@ -229,6 +236,15 @@
           <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span class="cal-weekend">六</span><span class="cal-weekend">日</span>
         </div>
         <div class="cal-grid" id="cal-grid"></div>
+      </div>
+
+      <div class="dash-card" id="almanac-card" data-component="almanac">
+        <div class="dash-card-title">黄历 · <span id="alm-date"></span></div>
+        <div class="almanac" id="almanac"></div>
+      </div>
+
+      <div class="dash-card market-card" data-component="market">
+        <div class="dash-card-title">行情 <span class="dash-card-sub">选中日期行情与当月 K 线</span></div>
         <div class="cal-stock hidden" id="cal-stock"></div>
         <div class="cal-kline-head hidden" id="cal-kline-head">
           <span class="kline-ma-legend">
@@ -241,14 +257,25 @@
         <div class="cal-kline hidden" id="cal-kline"></div>
       </div>
 
-      <div class="dash-card" id="almanac-card">
-        <div class="dash-card-title">黄历 · <span id="alm-date"></span></div>
-        <div class="almanac" id="almanac"></div>
-      </div>
-
-      <div class="dash-card hidden" id="todo-card">
+      <div class="dash-card" id="todo-card" data-component="todo">
         <div class="dash-card-title">待办 · <span id="todo-date"></span> <span class="dash-card-sub">右键日历任意一天可创建</span></div>
         <div class="todo-list" id="todo-list"></div>
+      </div>
+
+      <div class="dash-card terminal-card" data-component="terminal">
+        <div class="dash-card-title">终端 <span id="terminal-status" class="terminal-status">未连接</span></div>
+        <div id="terminal-output" class="terminal-output" aria-live="polite"></div>
+        <div class="terminal-input-row">
+          <span id="terminal-prompt">本地&gt;</span>
+          <input id="terminal-input" autocomplete="off" spellcheck="false" placeholder="输入命令，Enter 执行">
+        </div>
+        <div class="terminal-toolbar">
+          <button id="terminal-ssh" title="登录 SSH">SSH</button>
+          <button id="terminal-local" title="切回本地">本地</button>
+          <button id="terminal-interrupt">中断</button>
+          <button id="terminal-reconnect">重连</button>
+          <button id="terminal-clear">清屏</button>
+        </div>
       </div>
     </div>
   </section>
@@ -427,9 +454,14 @@
 
 <div id="toast-root"></div>
 
-<script>window.API_BASE = "http://127.0.0.1:__PORT__";</script>
+<script>
+  window.API_BASE = "http://127.0.0.1:__PORT__";
+  window.TERMINAL_TOKEN = "__TERMINAL_TOKEN__";
+</script>
 <script src="vendor/lunar.js"></script>
 <script src="vendor/echarts.min.js"></script>
+<script src="dashboard.js"></script>
 <script src="app.js"></script>
+<script src="terminal.js"></script>
 </body>
 </html>

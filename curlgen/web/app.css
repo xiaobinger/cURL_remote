@@ -1313,42 +1313,71 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
   animation: fade .25s var(--ease);
 }
 .dash-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
   margin-bottom: 16px;
 }
+.dash-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .dash-title { font: 600 20px var(--font-ui); color: var(--text-1); letter-spacing: .5px; }
 .dash-sub { font: 12px var(--font-ui); color: var(--text-3); margin-top: 4px; }
+.dash-edit-control, .dash-card-tools { display: none; }
+.layout-editing .dash-edit-control { display: flex; }
+.dash-add-components {
+  align-items: center; flex-wrap: wrap; gap: 8px;
+  margin: -4px 0 16px; padding: 9px 12px;
+  border: 1px dashed var(--border); border-radius: var(--r-md);
+  background: var(--bg-panel); color: var(--text-2); font: 12px var(--font-ui);
+}
+.dash-add-label, .dash-add-empty { color: var(--text-3); }
 
 .dash-stats {
-  display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px;
-  margin-bottom: 16px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px;
 }
+.stats-card { padding: 12px; }
 .stat-card {
-  background: var(--bg-panel); border: 1px solid var(--border-soft);
-  border-radius: var(--r-md); padding: 14px 16px;
+  background: var(--bg-input); border: 1px solid var(--border-soft);
+  border-radius: var(--r-md); padding: 12px 14px; min-width: 0;
   transition: all .18s var(--ease);
 }
 .stat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
-.stat-num { font: 700 26px var(--font-mono); color: var(--accent); }
+.stat-num { font: 700 24px var(--font-mono); color: var(--accent); }
 .stat-label { font: 12px var(--font-ui); color: var(--text-2); margin-top: 4px; }
 .stat-sub { font: 11px var(--font-ui); color: var(--text-3); margin-top: 2px; }
 
 .dash-grid {
-  display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px;
+  display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px;
   align-items: start;
 }
 .dash-card {
+  position: relative; min-width: 0;
   background: var(--bg-panel); border: 1px solid var(--border-soft);
   border-radius: var(--r-md); padding: 14px 16px;
 }
+.dash-card.component-hidden { display: none; }
+.layout-editing .dash-card:not(.component-hidden) { outline: 1px dashed var(--accent); outline-offset: 3px; }
+.dash-card-tools {
+  position: absolute; z-index: 8; top: -11px; right: 8px;
+  align-items: center; gap: 2px; padding: 2px;
+  border: 1px solid var(--accent); border-radius: 6px;
+  background: var(--bg-panel-solid); box-shadow: 0 3px 10px var(--shadow);
+}
+.layout-editing .dash-card-tools { display: flex; }
+.dash-card-tools button {
+  width: 25px; height: 22px; padding: 0; border: 1px solid transparent;
+  border-radius: 4px; background: transparent; color: var(--text-3);
+  font: 600 10px var(--font-mono); cursor: pointer;
+}
+.dash-card-tools button:hover, .dash-card-tools button.active {
+  color: var(--accent); border-color: var(--accent); background: var(--accent-soft);
+}
+.dash-card-tools .dash-drag { cursor: grab; font-size: 15px; }
+.dash-card-tools .dash-drag:active { cursor: grabbing; }
+.dash-card-tools .dash-hide { color: var(--red); font-size: 15px; }
 .dash-card-title {
   display: flex; align-items: center; gap: 8px;
   font: 600 13px var(--font-ui); color: var(--text-1);
   margin-bottom: 12px;
 }
 .dash-card-title #cal-title { flex: 1; text-align: center; letter-spacing: 1px; }
-.dash-calendar-card { grid-row: span 2; }
-#todo-card { grid-column: 2; }
 .dash-card-sub { font: 400 11px var(--font-ui); color: var(--text-3); margin-left: auto; }
 .dash-loading { color: var(--text-3); font-size: 12px; padding: 10px 0; }
 
@@ -1458,7 +1487,8 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 .alm-ji .alm-k { color: var(--red); font-weight: 700; font-size: 13px; }
 .alm-ji .alm-v { color: var(--red); }
 
-/* 待办（跟随日历选中日，无待办时卡片隐藏） */
+/* 待办（跟随日历选中日，空态不隐藏组件） */
+.todo-empty { padding: 18px 4px; text-align: center; color: var(--text-3); font: 12px var(--font-ui); }
 .todo-item {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 2px; border-top: 1px solid var(--border-soft);
@@ -1474,11 +1504,41 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 }
 .todo-del:hover { color: var(--red); background: var(--red-border); }
 
+/* 终端卡片（后续任务接管会话与服务器切换） */
+.terminal-status { margin-left: auto; color: var(--text-3); font: 400 11px var(--font-ui); }
+.terminal-output {
+  height: 170px; overflow: auto; padding: 10px 12px;
+  border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  background: var(--bg-input); color: var(--text-2);
+  font: 12px/1.55 var(--font-mono); white-space: pre-wrap; word-break: break-word;
+}
+.terminal-input-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  padding: 7px 10px; border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  background: var(--bg-input); color: var(--accent); font: 12px var(--font-mono);
+}
+.terminal-input-row input {
+  flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+  color: var(--text-1); font: 12px var(--font-mono);
+}
+.terminal-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.terminal-toolbar button {
+  padding: 4px 10px; border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  background: var(--bg-input); color: var(--text-2); font: 11px var(--font-ui); cursor: pointer;
+}
+.terminal-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+
 @media (max-width: 1100px) {
-  .dash-stats { grid-template-columns: repeat(3, 1fr); }
-  .dash-grid { grid-template-columns: 1fr; }
-  #todo-card { grid-column: auto; }
-  .dash-calendar-card { grid-row: auto; }
+  .dash-stats { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .dash-grid > [data-component] { grid-column: span 12 !important; }
+}
+
+@media (max-width: 700px) {
+  #dashboard { padding: 16px; }
+  .dash-head { align-items: flex-start; flex-direction: column; }
+  .dash-head-actions { width: 100%; flex-wrap: wrap; }
+  .dash-head-actions #dash-new { margin-left: auto; }
+  .kline-ma-legend { gap: 10px; }
 }
 
 /* ═══════════ 代码预览：左侧语言列表 + 语法高亮 ═══════════ */
