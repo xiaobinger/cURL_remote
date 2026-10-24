@@ -35,11 +35,24 @@
     let pollGate = null;
     let closeFailure = null;
     let resetPoll = null;
+    let inputGate = null;
+    let inputFailure = null;
+    const inputAttempts = [];
+    const inputArrivals = [];
+    const unhandledRejections = [];
+    const onUnhandledRejection = (event) => {
+      unhandledRejections.push(String(event.reason && (event.reason.message || event.reason)));
+      event.preventDefault();
+    };
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
 
     window.fetch = async (url, options) => {
       const target = String(url);
       const isPoll = target.includes("/api/terminal/events");
+      const isInput = target.endsWith("/api/terminal/input");
       const pollId = isPoll ? new URL(target).searchParams.get("id") : null;
+      const inputBody = isInput ? JSON.parse(options.body) : null;
+      if (isInput) inputAttempts.push({ id: inputBody.id, text: inputBody.text });
       requests.push({ target, method: (options && options.method) || "GET" });
       if (isPoll) {
         activePolls += 1;
@@ -58,6 +71,25 @@
             };
           });
         }
+        if (isInput && inputGate && inputGate.text === inputBody.text && !inputGate.released) {
+          inputGate.entered = true;
+          await new Promise((resolve) => {
+            inputGate.release = () => {
+              inputGate.released = true;
+              resolve();
+            };
+          });
+        }
+        if (isInput && inputFailure && inputFailure.remaining
+            && (!inputFailure.text || inputFailure.text === inputBody.text)) {
+          inputFailure.remaining -= 1;
+          if (inputFailure.kind === "network") throw new TypeError(inputFailure.message);
+          return new Response(JSON.stringify({ error: inputFailure.message }), {
+            status: inputFailure.status,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (isInput) inputArrivals.push({ id: inputBody.id, text: inputBody.text });
         if (target.endsWith("/api/terminal/close") && closeFailure && closeFailure.remaining) {
           closeFailure.remaining -= 1;
           if (closeFailure.kind === "network") throw new TypeError(closeFailure.message);
@@ -142,6 +174,123 @@
         await send('echo "<img id=terminal-injected src=x>"', "<img id=terminal-injected");
         assert(!document.querySelector("#terminal-injected"), "终端输出不得解析 HTML");
         assert(!output.querySelector("*"), "输出应仅包含文本节点");
+      });
+
+      await check("连续 input 严格按 A/B 到达", async () => {
+        await panel.openLocal();
+        await waitFor(() => panel.status === "ready", "顺序测试前应建立本地会话");
+        panel.clear();
+        const commandA = "echo TERMINAL_DEFERRED_ORDER_A";
+        const commandB = "echo TERMINAL_DEFERRED_ORDER_B";
+        const markerA = "TERMINAL_DEFERRED_ORDER_A";
+        const markerB = "TERMINAL_DEFERRED_ORDER_B";
+        inputGate = { text: commandA, entered: false, released: false, release: null };
+        let attemptsBeforeRelease = [];
+        try {
+          input.value = commandA;
+          const sendingA = panel.send();
+          input.value = commandB;
+          const sendingB = panel.send();
+          await waitFor(() => inputGate.entered, "第一条 input 应进入 deferred 门控");
+          await sleep(150);
+          attemptsBeforeRelease = inputAttempts.filter(
+            (entry) => entry.text === commandA || entry.text === commandB,
+          ).map((entry) => entry.text);
+          inputGate.release();
+          await Promise.all([sendingA, sendingB]);
+          await waitFor(() => (text().match(/TERMINAL_DEFERRED_ORDER_A/g) || []).length >= 2
+            && (text().match(/TERMINAL_DEFERRED_ORDER_B/g) || []).length >= 2,
+          "A/B 应都产生真实 shell 输出");
+          const arrivals = inputArrivals.filter(
+            (entry) => entry.text === commandA || entry.text === commandB,
+          ).map((entry) => entry.text);
+          const rendered = text();
+          const actualA = rendered.indexOf(markerA, rendered.indexOf(markerA) + 1);
+          const actualB = rendered.indexOf(markerB, rendered.indexOf(markerB) + 1);
+          assert(JSON.stringify(attemptsBeforeRelease) === JSON.stringify([commandA]),
+            `A 完成前不得发出 B，实际 ${attemptsBeforeRelease.join(",")}`);
+          assert(JSON.stringify(arrivals) === JSON.stringify([commandA, commandB]),
+            `stdin/adapter 到达必须为 A,B，实际 ${arrivals.join(",")}`);
+          assert(actualA >= 0 && actualB > actualA, "真实 shell 输出顺序必须为 A,B");
+          assert(panel.history.slice(-2).join(",") === [commandA, commandB].join(","),
+            "历史必须保持用户输入 A,B 顺序");
+        } finally {
+          if (inputGate && inputGate.release) inputGate.release();
+          inputGate = null;
+        }
+        await sleep(0);
+        assert(!unhandledRejections.length, `不得出现未处理 rejection：${unhandledRejections.join(";")}`);
+      });
+
+      await check("input 网络失败后队列继续", async () => {
+        await panel.openLocal();
+        await waitFor(() => panel.status === "ready", "失败恢复前应建立本地会话");
+        panel.clear();
+        const messages = [];
+        window.toast = (message, type) => messages.push({ message, type });
+        const commandA = "echo TERMINAL_FAILED_INPUT_A";
+        const commandB = "echo TERMINAL_AFTER_FAILED_INPUT_B";
+        inputFailure = { kind: "network", remaining: 1, text: commandA, message: "injected input network failure" };
+        try {
+          input.value = commandA;
+          const sendingA = panel.send();
+          input.value = commandB;
+          const sendingB = panel.send();
+          await Promise.all([sendingA, sendingB]);
+          await waitFor(() => (text().match(/TERMINAL_AFTER_FAILED_INPUT_B/g) || []).length >= 2,
+            "A 网络失败后 B 仍应真实执行");
+          assert(messages.some((entry) => entry.type === "err"
+            && entry.message.includes("injected input network failure")), "input 网络失败应显示错误");
+          assert(inputAttempts.filter((entry) => entry.text === commandA || entry.text === commandB)
+            .map((entry) => entry.text).join(",") === [commandA, commandB].join(","),
+          "失败后后续 input 仍应按 A,B 尝试");
+        } finally {
+          inputFailure = null;
+          window.toast = originalToast;
+        }
+        await sleep(0);
+        assert(!unhandledRejections.length, `失败队列不得出现未处理 rejection：${unhandledRejections.join(";")}`);
+      });
+
+      await check("generation 切换隔离旧 input 队列", async () => {
+        await panel.openLocal();
+        await waitFor(() => panel.status === "ready", "generation 测试前应建立本地会话");
+        const oldId = panel.id;
+        const commandA = "echo TERMINAL_OLD_GENERATION_A";
+        const commandB = "echo TERMINAL_OLD_GENERATION_B";
+        const newCommand = "echo TERMINAL_NEW_GENERATION_C";
+        inputGate = { text: commandA, entered: false, released: false, release: null };
+        try {
+          input.value = commandA;
+          const sendingA = panel.send();
+          input.value = commandB;
+          const sendingB = panel.send();
+          await waitFor(() => inputGate.entered, "旧会话 A 应进入 deferred 门控");
+          await sleep(100);
+          const switching = panel.openLocal();
+          await switching;
+          await waitFor(() => panel.status === "ready", "新会话应独立就绪");
+          const newId = panel.id;
+          assert(newId && newId !== oldId, "generation 切换应建立新会话");
+          input.value = newCommand;
+          const sendingNew = panel.send();
+          await waitFor(() => inputArrivals.some((entry) => entry.id === newId && entry.text === newCommand),
+            "旧队列 pending 不得阻塞新会话 input", 2000);
+          inputGate.release();
+          await Promise.all([sendingA, sendingB, sendingNew]);
+          assert(!inputAttempts.some((entry) => entry.id === newId
+            && (entry.text === commandA || entry.text === commandB)), "旧命令不得写入新会话");
+          assert(!inputArrivals.some((entry) => entry.text === commandB),
+            "切换后旧队列中尚未发送的 B 应被丢弃");
+          assert(inputAttempts.filter((entry) => entry.id === oldId
+            && (entry.text === commandA || entry.text === commandB)).length === 1,
+          "旧 generation 只应实际发出已 pending 的 A");
+        } finally {
+          if (inputGate && inputGate.release) inputGate.release();
+          inputGate = null;
+        }
+        await sleep(0);
+        assert(!unhandledRejections.length, `generation 切换不得出现未处理 rejection：${unhandledRejections.join(";")}`);
       });
 
       await check("cd 后 cd 显示持久工作目录", async () => {
@@ -405,13 +554,18 @@
         output.scrollIntoView({ block: "center" });
       });
 
+      assert(!unhandledRejections.length, `完整套件不得出现未处理 rejection：${unhandledRejections.join(";")}`);
       return { ok: true, results, maxActivePolls, maxActivePollsPerSession, requests: requests.length };
     } finally {
       if (pollGate && pollGate.release) pollGate.release();
+      if (inputGate && inputGate.release) inputGate.release();
       closeFailure = null;
       resetPoll = null;
+      inputGate = null;
+      inputFailure = null;
       window.fetch = originalFetch;
       window.toast = originalToast;
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
       state.ssh = originalSSH;
       document.body.click();
       if (panel.id) await panel.openLocal();

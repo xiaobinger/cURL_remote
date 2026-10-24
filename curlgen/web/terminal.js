@@ -33,6 +33,7 @@ class TerminalPanel {
     this.generation = 0;
     this._pollPromise = null;
     this._switching = null;
+    this._inputQueue = Promise.resolve();
     this._visible = null;
 
     this.output = document.querySelector("#terminal-output");
@@ -264,16 +265,21 @@ class TerminalPanel {
     this.historyDraft = "";
     this.input.value = "";
     this._append(`${this.promptEl.textContent} ${command}\n`);
-    try {
-      await terminalApi("/api/terminal/input", { id, text: command });
-      if (id === this.id && generation === this.generation) this._wake();
-    } catch (error) {
-      if (id === this.id && generation === this.generation) {
-        this._append(`错误: ${error.message}\n`);
-        this._setStatus("error");
-        toast(`命令发送失败: ${error.message}`, "err");
+    const operation = this._inputQueue.then(async () => {
+      if (id !== this.id || generation !== this.generation) return;
+      try {
+        await terminalApi("/api/terminal/input", { id, text: command });
+        if (id === this.id && generation === this.generation) this._wake();
+      } catch (error) {
+        if (id === this.id && generation === this.generation) {
+          this._append(`错误: ${error.message}\n`);
+          this._setStatus("error");
+          toast(`命令发送失败: ${error.message}`, "err");
+        }
       }
-    }
+    });
+    this._inputQueue = operation;
+    await operation;
   }
 
   async interrupt() {
@@ -290,6 +296,7 @@ class TerminalPanel {
   async close() {
     const id = this.id;
     this.generation += 1;
+    this._inputQueue = Promise.resolve();
     const generation = this.generation;
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;

@@ -19,12 +19,23 @@
   };
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  async function waitFor(predicate, message, timeout = 3000) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (predicate()) return;
+      await tick();
+    }
+    throw new Error(message);
+  }
 
   function installDashboardTestApi() {
     const initial = window.__dashboardTestInitialPrefs;
     window.__dashboardTestPrefs = initial ? clone(initial) : {};
     window.__dashboardTestRequests = [];
     window.__dashboardTestSaves = [];
+    window.__dashboardTestSaveCompletions = [];
+    window.__dashboardTestSaveGate = null;
+    window.__dashboardTestSaveFailure = null;
     window.fetch = async (url, options = {}) => {
       const target = String(url);
       const path = target.slice(target.indexOf("/api/"));
@@ -58,13 +69,39 @@
         result = { trading: true, open: 3000, close: 3001, pct: 0.1, live: false };
       } else if (path === "/api/ui_prefs" && method === "POST") {
         const body = JSON.parse(options.body || "{}");
+        window.__dashboardTestSaves.push(clone(body));
+        const gate = window.__dashboardTestSaveGate;
+        if (body.dashboard && gate && !gate.entered && !gate.released) {
+          gate.entered = true;
+          await new Promise((resolve) => {
+            gate.release = () => {
+              gate.released = true;
+              resolve();
+            };
+          });
+        }
+        const failure = window.__dashboardTestSaveFailure;
+        if (body.dashboard && failure && failure.remaining) {
+          failure.remaining -= 1;
+          if (failure.kind === "network") {
+            window.__dashboardTestSaveCompletions.push({ body: clone(body), ok: false });
+            throw new TypeError(failure.message);
+          }
+          result = { error: failure.message };
+          window.__dashboardTestSaveCompletions.push({ body: clone(body), ok: false });
+          return {
+            ok: false,
+            status: failure.status,
+            json: async () => clone(result),
+          };
+        }
         if (body.dashboard) window.__dashboardTestPrefs.dashboard = clone(body.dashboard);
         if (body.theme) window.__dashboardTestPrefs.theme = body.theme;
         if (body.stock) window.__dashboardTestPrefs.stock = body.stock;
-        window.__dashboardTestSaves.push(clone(body));
         result = { ok: true, ui: clone(window.__dashboardTestPrefs) };
+        window.__dashboardTestSaveCompletions.push({ body: clone(body), ok: true });
       }
-      return { ok: true, json: async () => clone(result) };
+      return { ok: true, status: 200, json: async () => clone(result) };
     };
   }
 
@@ -73,7 +110,13 @@
     const results = [];
     const assert = (ok, message) => { if (!ok) throw new Error(message); };
     const check = (name, fn) => {
+      if (options.focus && !name.includes(options.focus)) return;
       fn();
+      results.push(name);
+    };
+    const asyncCheck = async (name, fn) => {
+      if (options.focus && !name.includes(options.focus)) return;
+      await fn();
       results.push(name);
     };
     const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.classList.contains("component-hidden");
@@ -229,6 +272,81 @@
       dashboardLayout.items.forEach((item) => assert(item.visible, `恢复默认后 ${item.id} 应显示`));
       assert(window.__dashboardTestPrefs.dashboard.items.every((item) => item.visible), "恢复默认应保存到文件偏好");
     });
+    await waitFor(() => window.__dashboardTestSaveCompletions.length === window.__dashboardTestSaves.length,
+      "竞态测试前排空既有布局保存");
+
+    await asyncCheck("连续布局保存最后快照最后写入", async () => {
+      const beforeAttempts = window.__dashboardTestSaves.length;
+      const beforeCompletions = window.__dashboardTestSaveCompletions.length;
+      const gate = { entered: false, released: false, release: null };
+      window.__dashboardTestSaveGate = gate;
+      let attemptsBeforeRelease = 0;
+      try {
+        card("calendar").querySelector('[data-width="4"]').click();
+        card("calendar").querySelector('[data-width="8"]').click();
+        await waitFor(() => gate.entered, "第一张布局快照应进入 deferred 门控");
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        attemptsBeforeRelease = window.__dashboardTestSaves.length - beforeAttempts;
+        gate.release();
+        await waitFor(() => window.__dashboardTestSaveCompletions.length >= beforeCompletions + 2,
+          "两次布局保存均应完成");
+        const completions = window.__dashboardTestSaveCompletions.slice(beforeCompletions);
+        const widths = completions.map((entry) => entry.body.dashboard.items.find((item) => item.id === "calendar").width);
+        assert(attemptsBeforeRelease === 1, `旧快照完成前不得发出新快照，实际请求数 ${attemptsBeforeRelease}`);
+        assert(JSON.stringify(widths) === JSON.stringify([4, 8]), `完成顺序应为旧、新快照，实际 ${widths.join(",")}`);
+        assert(window.__dashboardTestSaveCompletions[window.__dashboardTestSaveCompletions.length - 1]
+          .body.dashboard.items.find((item) => item.id === "calendar").width === 8,
+        "最后完成的必须是最后用户操作快照");
+        assert(window.__dashboardTestPrefs.dashboard.items.find((item) => item.id === "calendar").width === 8,
+          "内存文件偏好必须保留最后快照");
+      } finally {
+        if (gate.release) gate.release();
+        window.__dashboardTestSaveGate = null;
+      }
+    });
+
+    const checkFailureRecovery = async (kind, expectedMessage) => {
+      await waitFor(() => window.__dashboardTestSaveCompletions.length === window.__dashboardTestSaves.length,
+        "故障测试前排空布局保存");
+      const beforeCompletions = window.__dashboardTestSaveCompletions.length;
+      const messages = [];
+      const unhandled = [];
+      const onUnhandled = (event) => {
+        unhandled.push(String(event.reason && (event.reason.message || event.reason)));
+        event.preventDefault();
+      };
+      const originalToast = window.toast;
+      window.toast = (message, type) => messages.push({ message, type });
+      window.addEventListener("unhandledrejection", onUnhandled);
+      window.__dashboardTestSaveFailure = {
+        kind, remaining: 1, status: 500, message: expectedMessage,
+      };
+      try {
+        card("calendar").querySelector('[data-width="6"]').click();
+        card("calendar").querySelector('[data-width="12"]').click();
+        await waitFor(() => window.__dashboardTestSaveCompletions.length >= beforeCompletions + 2,
+          "失败后的后续布局保存应继续完成");
+        await tick();
+        assert(messages.some((entry) => entry.type === "err" && entry.message.includes("布局保存失败")
+          && entry.message.includes(expectedMessage)), `${kind} 失败应显示可操作 toast`);
+        assert(window.__dashboardTestSaveCompletions.slice(beforeCompletions)
+          .map((entry) => entry.ok).join(",") === "false,true", "首个失败不得阻断后续保存");
+        assert(window.__dashboardTestPrefs.dashboard.items.find((item) => item.id === "calendar").width === 12,
+          "失败恢复后应保存最后用户快照");
+        assert(!unhandled.length, `${kind} 失败不得出现未处理 rejection：${unhandled.join(";")}`);
+      } finally {
+        window.__dashboardTestSaveFailure = null;
+        window.toast = originalToast;
+        window.removeEventListener("unhandledrejection", onUnhandled);
+      }
+    };
+    await asyncCheck("布局保存 HTTP 500 提示且队列恢复", async () => {
+      await checkFailureRecovery("http", "injected dashboard HTTP 500");
+    });
+    await asyncCheck("布局保存网络拒绝提示且队列恢复", async () => {
+      await checkFailureRecovery("network", "injected dashboard network failure");
+    });
+
     await click("#dash-edit");
     check("退出编辑隐藏全部编辑控件", () => {
       assert(!document.querySelector("#dashboard").classList.contains("layout-editing"), "应退出编辑模式");

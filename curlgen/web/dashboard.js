@@ -41,6 +41,7 @@ class DashboardLayout {
     this.items = [];
     this.editing = false;
     this.dragId = null;
+    this._saveQueue = Promise.resolve();
   }
 
   mount(layout) {
@@ -72,7 +73,18 @@ class DashboardLayout {
   save() {
     const dashboard = { version: 1, items: this.items.map((item) => ({ ...item })) };
     if (typeof state !== "undefined") state.dashboard = dashboard;
-    return api("/api/ui_prefs", { dashboard });
+    const run = async () => {
+      try {
+        const result = await api("/api/ui_prefs", { dashboard });
+        if (!result || result.error) {
+          throw new Error((result && result.error) || "后端未返回保存结果");
+        }
+      } catch (error) {
+        toast(`布局保存失败: ${error.message}，请重试`, "err");
+      }
+    };
+    this._saveQueue = this._saveQueue.then(run, run);
+    return this._saveQueue;
   }
 
   setEditing(value) {
