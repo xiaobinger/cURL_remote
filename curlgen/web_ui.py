@@ -5,12 +5,15 @@
   Python 端起本地 HTTP API 服务（127.0.0.1 随机端口）提供数据与执行能力，
   页面通过 window.API_BASE 与后端通信；执行输出经 /api/events 事件流推送。
 """
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import sys
 import threading
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -37,8 +40,14 @@ from .ssh_executor import (
     SSHRemoteExecutor,
     ExecutionError, ExecutionTimeout, ExecutorStop,
 )
+from .terminal_manager import TerminalManager
 
 logger = logging.getLogger("curlgen.web_ui")
+
+
+def terminal_token_valid(expected, supplied):
+    return bool(expected and supplied and hmac.compare_digest(expected, supplied))
+
 
 # /api/ui_prefs 读-改-写串行化（ThreadingHTTPServer 并发请求会丢更新）
 _UI_PREFS_LOCK = threading.Lock()
@@ -181,7 +190,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 content = f.read()
             if rel == "index.html":
                 content = content.decode("utf-8").replace(
-                    "__PORT__", str(self.app.port)).encode("utf-8")
+                    "__PORT__", str(self.app.port)).replace(
+                    "__TERMINAL_TOKEN__", self.app.terminal_token).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(len(content)))
@@ -214,6 +224,10 @@ class _ApiHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             path = self.path.split("?")[0]
+            if path.startswith("/api/terminal/") and not terminal_token_valid(
+                    self.app.terminal_token, self.headers.get("X-CurlGen-Token")):
+                self._send_json({"error": "forbidden"}, 403)
+                return
             if not path.startswith("/api/"):
                 self._serve_static(path)
                 return
@@ -255,6 +269,8 @@ class _ApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"stocks": load_stocks()})
             elif path == "/api/stock_lookup":
                 self._stock_lookup()
+            elif path == "/api/terminal/events":
+                self._terminal_events()
             elif path == "/api/events":
                 query = self.path.split("?", 1)[1] if "?" in self.path else ""
                 since = 0
@@ -277,8 +293,23 @@ class _ApiHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             path = self.path.split("?")[0]
+            if path.startswith("/api/terminal/") and not terminal_token_valid(
+                    self.app.terminal_token, self.headers.get("X-CurlGen-Token")):
+                self._send_json({"error": "forbidden"}, 403)
+                return
             data = self._read_json()
-            if path == "/api/generate":
+            if path == "/api/terminal/open":
+                self._send_json(self._terminal_open(data))
+            elif path == "/api/terminal/input":
+                self.app.terminals.write(data.get("id") or "", data.get("text") or "")
+                self._send_json({"ok": True})
+            elif path == "/api/terminal/interrupt":
+                self.app.terminals.interrupt(data.get("id") or "")
+                self._send_json({"ok": True})
+            elif path == "/api/terminal/close":
+                self.app.terminals.close(data.get("id") or "")
+                self._send_json({"ok": True})
+            elif path == "/api/generate":
                 self._generate(data)
             elif path == "/api/execute":
                 self._execute(data)
@@ -342,6 +373,27 @@ class _ApiHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, 500)
 
     # ── 业务 ──
+    def _terminal_open(self, payload):
+        return self.app.terminals.open(
+            kind=payload.get("kind") or "local",
+            label=payload.get("label") or None,
+        )
+
+    def _terminal_events(self):
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = urllib.parse.parse_qs(query, keep_blank_values=True)
+        raw_since = params.get("since", ["0"])[0]
+        if not re.fullmatch(r"[0-9]+", raw_since):
+            self._send_json({"error": "invalid since"}, 400)
+            return
+        try:
+            since = int(raw_since)
+        except ValueError:
+            self._send_json({"error": "invalid since"}, 400)
+            return
+        session_id = params.get("id", [""])[0]
+        self._send_json(self.app.terminals.events(session_id, since))
+
     def _holidays(self):
         """法定节假日/调休：代理 timor.tech 年度数据（holiday=true→休, false→班），
         失败时回落到内置数据（BUILTIN_HOLIDAYS）。结果按年缓存。"""
@@ -671,6 +723,8 @@ class WebCurlGenerator(QMainWindow):
         self._exec_lock = threading.Lock()
         self._exec_mode = None     # 当前执行模式（local/ssh），供输出回调区分
         self._ssh_hold = ""        # SSH stdout 末行驻留缓冲（剥离 -w 尾注）
+        self.terminal_token = secrets.token_urlsafe(32)
+        self.terminals = TerminalManager()
 
         _ApiHandler.app = self
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _ApiHandler)
@@ -873,5 +927,6 @@ class WebCurlGenerator(QMainWindow):
             super().closeEvent(event)
             return
         self._server_closed = True
+        self.terminals.close_all()
         self._server.shutdown()
         super().closeEvent(event)
