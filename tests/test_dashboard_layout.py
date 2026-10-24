@@ -20,7 +20,7 @@ class DashboardLayoutTests(unittest.TestCase):
         result = normalize_dashboard_layout(raw)
         self.assertEqual(result["version"], 1)
         self.assertEqual([x["id"] for x in result["items"][:2]], ["calendar", "terminal"])
-        self.assertEqual(result["items"][0], {"id": "calendar", "visible": False, "width": 4})
+        self.assertEqual(result["items"][0], {"id": "calendar", "visible": False, "width": 8})
         self.assertEqual(len(result["items"]), 6)
         self.assertIn("market", [x["id"] for x in result["items"]])
 

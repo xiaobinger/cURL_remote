@@ -172,7 +172,7 @@ def normalize_dashboard_layout(value):
         result.append({
             "id": component_id,
             "visible": item.get("visible") is not False,
-            "width": item.get("width") if item.get("width") in (4, 6, 8, 12) else 4,
+            "width": item.get("width") if item.get("width") in (4, 6, 8, 12) else by_id[component_id]["width"],
         })
     for item in DEFAULT_DASHBOARD_LAYOUT["items"]:
         if item["id"] not in seen:
