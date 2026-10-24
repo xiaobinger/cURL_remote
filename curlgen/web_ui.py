@@ -793,6 +793,9 @@ class WebCurlGenerator(QMainWindow):
         # SSH 模式为剥离 curl -w 尾注：stdout 驻留最后一行缓冲，执行结束时统一处理
         if self._exec_mode == "ssh" and tag == "stdout":
             self._ssh_hold += text
+            if SSH_META_RE.search(self._ssh_hold):
+                self._flush_ssh_hold()
+                return
             idx = self._ssh_hold.rfind("\n")
             if idx >= 0:
                 out, self._ssh_hold = self._ssh_hold[:idx + 1], self._ssh_hold[idx + 1:]

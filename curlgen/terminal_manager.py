@@ -103,9 +103,9 @@ class TerminalManager:
                     raise RuntimeError("terminal session is closed")
                 process = session["process"]
                 adapter = session["adapter"]
+            if not text.endswith(("\n", "\r")):
+                text += "\n"
             if process is not None:
-                if not text.endswith(("\n", "\r")):
-                    text += "\n"
                 data = text.encode(session["encoding"], errors="replace")
                 try:
                     remaining = memoryview(data)

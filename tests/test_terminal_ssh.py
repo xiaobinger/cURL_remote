@@ -303,12 +303,24 @@ class SSHTerminalTests(unittest.TestCase):
 
         gate = FakeGate.instances[0]
         self.assertEqual(gate.targets, ["10.0.0.9"])
-        self.assertEqual(gate.sent, ["hostname"])
+        self.assertEqual(gate.sent, ["hostname\n"])
         self.assertEqual(gate.cfg["jump_pass"], "secret")
         events = str(manager.events(sid, 0))
         self.assertNotIn("secret", events)
         self.assertNotIn("jump_pass", events)
         self.assertNotIn("jump_host", events)
+
+    def test_write_submits_ssh_command_without_duplicating_existing_newline(self):
+        manager = self.make_manager()
+        session = manager.open("ssh", "生产B")
+        sid = session["id"]
+        wait_text(manager, sid, "root@test")
+
+        manager.write(sid, "hostname")
+        manager.write(sid, "pwd\n")
+        manager.write(sid, "pwd\r")
+
+        self.assertEqual(FakeGate.instances[0].sent, ["hostname\n", "pwd\n", "pwd\r"])
 
     def test_rejects_unknown_or_missing_label_without_constructing_backend(self):
         for label in ("不存在", None):
@@ -532,7 +544,7 @@ class SSHTerminalTests(unittest.TestCase):
         self.assertFalse(sender.is_alive())
         self.assertFalse(closer.is_alive())
         self.assertEqual(errors, [])
-        self.assertEqual(BlockingSendFakeGate.instances[0].sent, ["hostname"])
+        self.assertEqual(BlockingSendFakeGate.instances[0].sent, ["hostname\n"])
         events = manager.events(sid, 0)["events"]
         descriptions = [(event["type"], event["text"]) for event in events]
         self.assertEqual(descriptions.count(("status", "closed")), 1)

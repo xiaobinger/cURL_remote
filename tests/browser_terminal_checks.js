@@ -151,7 +151,7 @@
         await send("cd");
         const paths = text().match(/[A-Za-z]:\\[^\r\n]+/g) || [];
         assert(paths.length >= 2, `应读取两次 cwd：${text()}`);
-        assert(paths.at(-1) !== paths.at(-2), "cd .. 后 cwd 应改变且跨命令保持");
+        assert(paths[paths.length - 1] !== paths[paths.length - 2], "cd .. 后 cwd 应改变且跨命令保持");
       });
 
       await check("上下箭头遍历历史", async () => {

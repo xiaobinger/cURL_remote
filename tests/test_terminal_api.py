@@ -67,6 +67,30 @@ class TerminalAPIHelperTests(unittest.TestCase):
         self.assertNotIn("jump_pass", str(response))
 
 
+class SSHExecutionEventTests(unittest.TestCase):
+    def test_metadata_with_trailing_newline_emits_http_response_not_plain_output(self):
+        app = WebCurlGenerator.__new__(WebCurlGenerator)
+        app.events = []
+        app._exec_mode = "ssh"
+        app._ssh_hold = ""
+
+        app._on_exec_progress(
+            "stdout",
+            "response body\n__CG_META__:200:0.125:577:text/html\n",
+        )
+        app._flush_ssh_hold()
+
+        responses = [event for event in app.events if event["type"] == "http_resp"]
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(responses[0]["status"], 200)
+        self.assertEqual(responses[0]["elapsed_ms"], 125)
+        output = "".join(
+            event["text"] for event in app.events if event["type"] == "output"
+        )
+        self.assertIn("response body", output)
+        self.assertNotIn("__CG_META__", output)
+
+
 class TerminalAPIHTTPTests(unittest.TestCase):
     TOKEN = "test-terminal-token"
 
