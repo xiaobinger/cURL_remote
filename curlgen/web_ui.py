@@ -826,7 +826,7 @@ class WebCurlGenerator(QMainWindow):
                     "url": "",
                 })
                 return
-            except ValueError:
+            except (ValueError, OverflowError):
                 logger.warning("SSH 尾注解析失败: %s", m.group(0))
         self.push_event({"type": "output", "tag": "stdout", "text": hold})
 

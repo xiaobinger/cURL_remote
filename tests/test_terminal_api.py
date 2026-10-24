@@ -175,6 +175,22 @@ class SSHExecutionEventContractTests(unittest.TestCase):
 
         self.assert_events(events, ["body\n"])
 
+    def test_invalid_elapsed_metadata_preserves_hold_without_http_response(self):
+        for name, elapsed in (
+            ("malformed_decimal", "1.2.3"),
+            ("float_infinity", "9" * 400),
+        ):
+            with self.subTest(name=name):
+                self.setUp()
+                hold = f"__CG_META__:200:{elapsed}:577:text/html\n"
+                events = self.emit(f"body\n{hold}")
+                self.app._flush_ssh_hold()
+
+                self.assertEqual(events, [
+                    {"type": "output", "tag": "stdout", "text": "body\n"},
+                    {"type": "output", "tag": "stdout", "text": hold},
+                ])
+
 
 class TerminalAPIHTTPTests(unittest.TestCase):
     TOKEN = "test-terminal-token"
