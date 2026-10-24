@@ -17,7 +17,7 @@
     throw new Error(message);
   }
 
-  async function runTerminalBrowserChecks() {
+  async function runTerminalBrowserChecks(focus) {
     const assert = (ok, message) => { if (!ok) throw new Error(message); };
     assert(window.terminalPanel, "TerminalPanel 应初始化");
     const panel = window.terminalPanel;
@@ -28,25 +28,70 @@
     const originalToast = window.toast;
     const originalSSH = state.ssh;
     const requests = [];
+    const activePollsById = new Map();
     let activePolls = 0;
     let maxActivePolls = 0;
+    let maxActivePollsPerSession = 0;
+    let pollGate = null;
+    let closeFailure = null;
+    let resetPoll = null;
 
     window.fetch = async (url, options) => {
       const target = String(url);
       const isPoll = target.includes("/api/terminal/events");
+      const pollId = isPoll ? new URL(target).searchParams.get("id") : null;
       requests.push({ target, method: (options && options.method) || "GET" });
       if (isPoll) {
         activePolls += 1;
         maxActivePolls = Math.max(maxActivePolls, activePolls);
+        const activeForSession = (activePollsById.get(pollId) || 0) + 1;
+        activePollsById.set(pollId, activeForSession);
+        maxActivePollsPerSession = Math.max(maxActivePollsPerSession, activeForSession);
       }
       try {
+        if (isPoll && pollGate && pollGate.id === pollId && !pollGate.released) {
+          pollGate.entered = true;
+          await new Promise((resolve) => {
+            pollGate.release = () => {
+              pollGate.released = true;
+              resolve();
+            };
+          });
+        }
+        if (target.endsWith("/api/terminal/close") && closeFailure && closeFailure.remaining) {
+          closeFailure.remaining -= 1;
+          if (closeFailure.kind === "network") throw new TypeError(closeFailure.message);
+          return new Response(JSON.stringify({ error: closeFailure.message }), {
+            status: closeFailure.status,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (isPoll && resetPoll && resetPoll.id === pollId && resetPoll.remaining) {
+          const response = await originalFetch(url, options);
+          const data = await response.clone().json();
+          const seq = data.next - 1;
+          assert(seq >= 1, "reset 注入前真实会话应已有事件");
+          resetPoll.remaining -= 1;
+          resetPoll.seen += 1;
+          resetPoll.cursor = seq;
+          return new Response(JSON.stringify({
+            reset: true,
+            session: data.session,
+            events: [{ seq, type: "stdout", text: "RESET_HTTP_REPLAY" }],
+            next: data.next,
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
         return await originalFetch(url, options);
       } finally {
-        if (isPoll) activePolls -= 1;
+        if (isPoll) {
+          activePolls -= 1;
+          activePollsById.set(pollId, activePollsById.get(pollId) - 1);
+        }
       }
     };
 
     const check = async (name, fn) => {
+      if (focus && !name.includes(focus)) return;
       await fn();
       results.push(name);
     };
@@ -121,6 +166,13 @@
         assert(input.value === "echo TERMINAL_HISTORY_TWO", "ArrowDown 应返回较新命令");
         key("ArrowDown");
         assert(input.value === "", "历史末尾 ArrowDown 应恢复空输入");
+        input.value = "unsent draft";
+        key("ArrowDown");
+        assert(input.value === "unsent draft", "历史末尾 ArrowDown 不得清空非空草稿");
+        key("ArrowUp");
+        assert(input.value === "echo TERMINAL_HISTORY_TWO", "草稿后 ArrowUp 应进入历史");
+        key("ArrowDown");
+        assert(input.value === "unsent draft", "返回历史末尾应恢复非空草稿");
       });
 
       await check("清屏仅清前端且会话可继续", async () => {
@@ -161,19 +213,54 @@
         assert(text() === "SEQ_ONCE", `重复 seq 不得重复输出：${text()}`);
       });
 
-      await check("reset 清空并重放保留事件", async () => {
-        panel._applyEvents({
-          reset: true,
-          events: [{ seq: 2, type: "stdout", text: "RESET_REPLAY" }],
-          next: 3,
-        });
-        assert(text() === "RESET_REPLAY", `reset 应只显示本次事件：${text()}`);
-        panel._applyEvents({
-          reset: true,
-          events: [{ seq: 2, type: "stdout", text: "RESET_REPLAY" }],
-          next: 3,
-        });
-        assert(text() === "RESET_REPLAY", "相同 reset 重放仍不得重复");
+      await check("真实 poll reset 清空重放且后续不重复", async () => {
+        await panel.openLocal();
+        await waitFor(() => panel.status === "ready", "reset 前应建立本地会话");
+        await send("echo RESET_BEFORE_HTTP", "RESET_BEFORE_HTTP");
+        resetPoll = { id: panel.id, remaining: 1, seen: 0, cursor: 0 };
+        await waitFor(
+          () => resetPoll.seen === 1 && text() === "RESET_HTTP_REPLAY",
+          "reset 必须经真实 events 响应清空并重放",
+        );
+        assert(panel.cursor === resetPoll.cursor, "reset 后 cursor 应推进到 next - 1");
+        await send("echo RESET_AFTER_HTTP", "RESET_AFTER_HTTP");
+        assert((text().match(/RESET_HTTP_REPLAY/g) || []).length === 1, "后续 poll 不得重复重放 reset 事件");
+        assert(text().includes("RESET_AFTER_HTTP"), "reset 后新事件仍应正常显示");
+      });
+
+      await check("旧 events pending 时切换仍独立轮询", async () => {
+        await panel.openLocal();
+        await waitFor(() => panel.status === "ready", "切换前应建立本地会话");
+        panel.clear();
+        const oldId = panel.id;
+        pollGate = { id: oldId, entered: false, released: false, release: null };
+        try {
+          await waitFor(() => pollGate.entered, "旧 events 必须已进入 pending");
+          const oldInput = await originalFetch(`${window.API_BASE}/api/terminal/input`, {
+            method: "POST",
+            headers: { "X-CurlGen-Token": window.TERMINAL_TOKEN, "Content-Type": "text/plain" },
+            body: JSON.stringify({ id: oldId, text: "echo OLD_PENDING_EVENT" }),
+          });
+          assert(oldInput.ok, "旧会话输入应真实写入");
+          const switching = panel.openLocal();
+          await waitFor(() => panel.id && panel.id !== oldId, "close 成功后才应出现新 session");
+          const newId = panel.id;
+          const newPollCount = () => requests.filter(
+            (entry) => entry.target.includes(`/api/terminal/events?id=${newId}&`),
+          ).length;
+          await waitFor(() => newPollCount() > 0, "旧 events pending 时新会话仍应发 poll", 2000);
+          await waitFor(() => panel.status === "ready", "新本地会话应独立收到 ready 状态");
+          assert(!text().includes("OLD_PENDING_EVENT"), "旧响应不得写入新会话输出");
+          pollGate.release();
+          await switching;
+          const afterRelease = newPollCount();
+          await waitFor(() => newPollCount() > afterRelease, "旧响应结束后新会话仍应继续串行 poll");
+          await send("echo NEW_AFTER_PENDING", "NEW_AFTER_PENDING");
+          assert(maxActivePollsPerSession === 1, "每个活跃会话最多一个 events 请求");
+          assert(!text().includes("OLD_PENDING_EVENT"), "旧迟到响应不得渲染");
+        } finally {
+          if (pollGate.release) pollGate.release();
+        }
       });
 
       await check("中断、已断开状态与重连", async () => {
@@ -198,6 +285,63 @@
         await panel.openLocal();
         assert(panel.id !== sshId, "openLocal 应切换会话 id");
         assert(await sessionStatus(sshId) === "closed", "openLocal 前必须关闭旧 SSH 会话");
+      });
+
+      await check("close HTTP 500 保留旧会话且重试恢复", async () => {
+        await panel.openLocal();
+        await waitFor(() => panel.status === "ready", "500 测试前应建立本地会话");
+        const oldId = panel.id;
+        const beforeOpens = requests.filter((entry) => entry.target.endsWith("/api/terminal/open")).length;
+        const messages = [];
+        window.toast = (message, type) => messages.push({ message, type });
+        closeFailure = { kind: "http", status: 500, remaining: 1, message: "injected close 500" };
+        const result = await panel.openSSH("__terminal_close_500__");
+        assert(result === null, "close HTTP 500 时不得打开替代会话");
+        assert(panel.id === oldId, "close HTTP 500 后必须保留旧 session id 供重试");
+        assert(panel.status === "error", "close HTTP 500 后应显示错误状态");
+        assert(messages.some((entry) => entry.type === "err" && entry.message.includes("injected close 500")), "close HTTP 500 应向用户显示错误");
+        const afterOpens = requests.filter((entry) => entry.target.endsWith("/api/terminal/open")).length;
+        assert(afterOpens === beforeOpens, "close HTTP 500 时不得请求 open");
+        assert(await sessionStatus(oldId) === "ready", "注入失败的 close 不得影响真实旧会话");
+        await panel.openLocal();
+        assert(panel.id !== oldId, "close 恢复后应能继续切换");
+        assert(await sessionStatus(oldId) === "closed", "重试应真正关闭旧会话");
+      });
+
+      await check("close 网络失败保留旧会话且重试恢复", async () => {
+        await panel.openLocal();
+        await waitFor(() => panel.status === "ready", "网络失败测试前应建立本地会话");
+        const oldId = panel.id;
+        const beforeOpens = requests.filter((entry) => entry.target.endsWith("/api/terminal/open")).length;
+        const messages = [];
+        window.toast = (message, type) => messages.push({ message, type });
+        closeFailure = { kind: "network", remaining: 1, message: "injected close network failure" };
+        const result = await panel.openLocal();
+        assert(result === null, "close 网络失败时不得打开替代会话");
+        assert(panel.id === oldId, "close 网络失败后必须保留旧 session id 供重试");
+        assert(panel.status === "error", "close 网络失败后应显示错误状态");
+        assert(messages.some((entry) => entry.type === "err" && entry.message.includes("injected close network failure")), "close 网络失败应向用户显示错误");
+        const afterOpens = requests.filter((entry) => entry.target.endsWith("/api/terminal/open")).length;
+        assert(afterOpens === beforeOpens, "close 网络失败时不得请求 open");
+        assert(await sessionStatus(oldId) === "ready", "网络失败的 close 不得影响真实旧会话");
+        await panel.openLocal();
+        assert(panel.id !== oldId, "网络恢复后应能关闭旧会话并切换");
+        assert(await sessionStatus(oldId) === "closed", "网络恢复后的重试应真正关闭旧会话");
+      });
+
+      await check("close 已不存在可安全继续切换", async () => {
+        await panel.openLocal();
+        await waitFor(() => panel.status === "ready", "已不存在测试前应建立本地会话");
+        const oldId = panel.id;
+        closeFailure = { kind: "http", status: 500, remaining: 1, message: `'${oldId}'` };
+        const result = await panel.openLocal();
+        assert(result && panel.id !== oldId, "后端明确报告 session 已不存在时应允许切换");
+        const cleanup = await originalFetch(`${window.API_BASE}/api/terminal/close`, {
+          method: "POST",
+          headers: { "X-CurlGen-Token": window.TERMINAL_TOKEN, "Content-Type": "text/plain" },
+          body: JSON.stringify({ id: oldId }),
+        });
+        assert(cleanup.ok, "已不存在测试中的真实旧会话应清理");
       });
 
       await check("SSH 菜单使用 .ctx-menu 且 click 不立即关闭", async () => {
@@ -261,8 +405,11 @@
         output.scrollIntoView({ block: "center" });
       });
 
-      return { ok: true, results, maxActivePolls, requests: requests.length };
+      return { ok: true, results, maxActivePolls, maxActivePollsPerSession, requests: requests.length };
     } finally {
+      if (pollGate && pollGate.release) pollGate.release();
+      closeFailure = null;
+      resetPoll = null;
       window.fetch = originalFetch;
       window.toast = originalToast;
       state.ssh = originalSSH;

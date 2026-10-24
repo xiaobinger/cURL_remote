@@ -10,7 +10,11 @@ async function terminalApi(path, body) {
   }
   const response = await fetch(window.API_BASE + path, options);
   const json = await response.json();
-  if (!response.ok || json.error) throw new Error(json.error || `HTTP ${response.status}`);
+  if (!response.ok || json.error) {
+    const error = new Error(json.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return json;
 }
 
@@ -79,7 +83,8 @@ class TerminalPanel {
       if (this.historyIndex === this.history.length) this.historyDraft = this.input.value;
       this.historyIndex = Math.max(0, this.historyIndex - 1);
     } else {
-      this.historyIndex = Math.min(this.history.length, this.historyIndex + 1);
+      if (this.historyIndex === this.history.length) return;
+      this.historyIndex += 1;
     }
     this.input.value = this.historyIndex === this.history.length
       ? this.historyDraft : this.history[this.historyIndex];
@@ -124,7 +129,7 @@ class TerminalPanel {
 
   async _switch(kind, label) {
     const run = async () => {
-      await this.close();
+      if (!await this.close()) return null;
       this.clear();
       this.cursor = 0;
       this.kind = kind;
@@ -137,7 +142,7 @@ class TerminalPanel {
         this.label = session.label || label;
         this.cursor = 0;
         this._setStatus(session.status || "connecting");
-        this._schedule(0);
+        this._schedule(0, true);
         return session;
       } catch (error) {
         this.id = null;
@@ -161,14 +166,14 @@ class TerminalPanel {
     return this.kind === "ssh" ? this.openSSH(this.label) : this.openLocal();
   }
 
-  _schedule(delay = this._pollDelay()) {
-    if (!this.id || this.status === "closed" || this.timer !== null) return;
+  _schedule(delay = this._pollDelay(), includeClosed = false) {
+    if (!this.id || (this.status === "closed" && !includeClosed) || this.timer !== null) return;
     const id = this.id;
     const generation = this.generation;
     this.timer = setTimeout(() => {
       this.timer = null;
       if (id !== this.id || generation !== this.generation) return;
-      void this.poll();
+      void this.poll(includeClosed);
     }, delay);
   }
 
@@ -178,13 +183,13 @@ class TerminalPanel {
     this._schedule(0);
   }
 
-  poll() {
-    if (!this.id || this.status === "closed") return Promise.resolve();
+  poll(includeClosed = false) {
+    if (!this.id || (this.status === "closed" && !includeClosed)) return Promise.resolve();
     if (this._pollPromise) return this._pollPromise;
     const id = this.id;
     const generation = this.generation;
     this.polling = true;
-    this._pollPromise = (async () => {
+    const promise = (async () => {
       try {
         const data = await terminalApi(
           `/api/terminal/events?id=${encodeURIComponent(id)}&since=${this.cursor}`,
@@ -194,12 +199,14 @@ class TerminalPanel {
       } catch (error) {
         if (id === this.id && generation === this.generation) this._setStatus("error");
       } finally {
+        if (this._pollPromise !== promise) return;
         this.polling = false;
         this._pollPromise = null;
         if (id === this.id && generation === this.generation) this._schedule();
       }
     })();
-    return this._pollPromise;
+    this._pollPromise = promise;
+    return promise;
   }
 
   _applyEvents(data) {
@@ -283,17 +290,33 @@ class TerminalPanel {
   async close() {
     const id = this.id;
     this.generation += 1;
+    const generation = this.generation;
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
-    this.id = null;
-    this.cursor = 0;
-    this._setStatus("closed");
-    if (!id) return;
+    this._pollPromise = null;
+    this.polling = false;
+    if (!id) {
+      this.cursor = 0;
+      this._setStatus("closed");
+      return true;
+    }
     try {
       await terminalApi("/api/terminal/close", { id });
     } catch (error) {
-      // Switching sessions is best-effort; an already gone session needs no retry.
+      const missing = error.status === 404
+        || (error.status === 500 && error.message === `'${id}'`);
+      if (!missing) {
+        if (id === this.id && generation === this.generation) this._setStatus("error");
+        toast(`终端关闭失败: ${error.message}`, "err");
+        return false;
+      }
     }
+    if (id === this.id && generation === this.generation) {
+      this.id = null;
+      this.cursor = 0;
+      this._setStatus("closed");
+    }
+    return true;
   }
 
   clear() {
