@@ -11,6 +11,8 @@ import uuid
 class TerminalManager:
     MAX_EVENTS = 1000
     MAX_EVENT_BYTES = 512 * 1024
+    READER_JOIN_TIMEOUT = 5
+    READER_CLOSE_TIMEOUT = 0.1
 
     def __init__(self, session_factory=None, ssh_config_loader=None):
         self._sessions = {}
@@ -38,6 +40,7 @@ class TerminalManager:
             "closing": False,
             "last_used": time.monotonic(),
             "write_lock": threading.Lock(),
+            "startup_lock": threading.Lock(),
             "readers": [],
         }
         with self._lock:
@@ -113,20 +116,25 @@ class TerminalManager:
             if session["closed"] or session["closing"]:
                 return
             session["closing"] = True
-            process = session["process"]
-            adapter = session["adapter"]
-        if process is not None:
-            self._terminate_process(process)
-            self._close_stream(process.stdin)
+        if session["kind"] == "local":
+            with session["startup_lock"]:
+                with self._lock:
+                    if session["closed"]:
+                        return
+                    process = session["process"]
+            if process is not None:
+                self._terminate_process(process)
+                self._close_stream(process.stdin)
             self._finish_local(session)
-        elif adapter is not None:
+            return
+        with self._lock:
+            adapter = session["adapter"]
+        if adapter is not None:
             try:
                 adapter.close()
             except (OSError, ValueError):
                 pass
-            self._finish(session)
-        else:
-            self._finish(session)
+        self._finish(session)
 
     def cleanup_idle(self, max_age=1800):
         now = time.monotonic()
@@ -149,47 +157,43 @@ class TerminalManager:
 
     def _start_local(self, session):
         command = [os.environ.get("COMSPEC", "cmd.exe"), "/Q"] if os.name == "nt" else ["/bin/sh"]
-        try:
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0,
-                start_new_session=os.name != "nt",
-            )
-        except OSError as exc:
-            self._emit(session, "status", "error")
-            self._emit(session, "stderr", str(exc))
-            self._finish(session)
-            return
-        with self._lock:
-            should_close = session["closed"] or session["closing"]
-            if not should_close:
-                session["process"] = process
-                session["status"] = "ready"
-                self._emit(session, "status", "ready")
-        if should_close:
-            self._terminate_process(process)
-            for stream in (process.stdin, process.stdout, process.stderr):
-                self._close_stream(stream)
-            self._finish(session)
-            return
-        readers = []
-        for stream_name in ("stdout", "stderr"):
-            stream = getattr(process, stream_name)
-            readers.append(
-                threading.Thread(
-                    target=self._read_local,
-                    args=(session, stream, stream_name),
-                    daemon=True,
+        with session["startup_lock"]:
+            try:
+                process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=0,
+                    start_new_session=os.name != "nt",
                 )
-            )
-        with self._lock:
-            session["readers"] = readers
-        for reader in readers:
-            reader.start()
-        threading.Thread(target=self._wait_local, args=(session, process), daemon=True).start()
+            except OSError as exc:
+                self._emit(session, "status", "error")
+                self._emit(session, "stderr", str(exc))
+                self._finish(session)
+                return
+            readers = []
+            for stream_name in ("stdout", "stderr"):
+                stream = getattr(process, stream_name)
+                readers.append(
+                    threading.Thread(
+                        target=self._read_local,
+                        args=(session, stream, stream_name),
+                        daemon=True,
+                    )
+                )
+            for reader in readers:
+                reader.start()
+            with self._lock:
+                session["process"] = process
+                session["readers"] = readers
+                should_close = session["closed"] or session["closing"]
+                if not should_close:
+                    session["status"] = "ready"
+                    self._emit(session, "status", "ready")
+            threading.Thread(
+                target=self._wait_local, args=(session, process), daemon=True
+            ).start()
 
     def _start_ssh(self, session):
         self._emit(session, "status", "error")
@@ -224,10 +228,19 @@ class TerminalManager:
     def _finish_local(self, session):
         with self._lock:
             readers = list(session["readers"])
+            process = session["process"]
         current = threading.current_thread()
+        pending = []
         for reader in readers:
             if reader is not current:
-                reader.join()
+                reader.join(timeout=self.READER_JOIN_TIMEOUT)
+                if reader.is_alive():
+                    pending.append(reader)
+        if pending and process is not None:
+            self._close_stream(process.stdout)
+            self._close_stream(process.stderr)
+            for reader in pending:
+                reader.join(timeout=self.READER_CLOSE_TIMEOUT)
         self._finish(session)
 
     def _emit(self, session, event_type, text):
@@ -237,6 +250,8 @@ class TerminalManager:
             text = encoded.decode("utf-8", errors="ignore")
             encoded = text.encode("utf-8")
         with self._lock:
+            if session["closed"] and event_type in ("stdout", "stderr"):
+                return
             event = {"seq": session["next"], "type": event_type, "text": text}
             session["next"] += 1
             session["events"].append(event)
@@ -304,15 +319,23 @@ class TerminalManager:
             pass
         try:
             process.wait(timeout=5)
-            return
         except (OSError, subprocess.SubprocessError):
             pass
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
+            os.killpg(process.pid, 0)
+            group_alive = True
+        except ProcessLookupError:
+            group_alive = False
+        except OSError:
+            group_alive = True
+        if group_alive:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
         try:
-            process.kill()
+            if process.poll() is None:
+                process.kill()
             process.wait(timeout=5)
         except (OSError, subprocess.SubprocessError):
             pass

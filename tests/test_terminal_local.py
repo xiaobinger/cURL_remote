@@ -24,6 +24,20 @@ class FakeProcess:
         return 0
 
 
+class ControlledOutput:
+    def __init__(self, release, data):
+        self.release = release
+        self.data = data
+
+    def read(self, size):
+        self.release.wait(2)
+        data, self.data = self.data, b""
+        return data
+
+    def close(self):
+        pass
+
+
 class PartialConcurrentStdin:
     def __init__(self):
         self._lock = threading.Lock()
@@ -107,6 +121,7 @@ class LocalTerminalTests(unittest.TestCase):
             "closing": False,
             "last_used": time.monotonic(),
             "write_lock": threading.Lock(),
+            "startup_lock": threading.Lock(),
             "readers": [],
         }
         self.manager._sessions[sid] = session
@@ -182,6 +197,143 @@ class LocalTerminalTests(unittest.TestCase):
     def test_explicit_close_drains_tail_output_before_closed(self):
         self.assert_tail_output_precedes_closed(explicit_close=True)
 
+    def test_close_waits_for_atomic_reader_publication_and_preserves_tail_order(self):
+        release_output = threading.Event()
+        process = FakeProcess(
+            stdout=ControlledOutput(release_output, b"tail-output"),
+            stderr=ControlledOutput(release_output, b""),
+        )
+        reader_constructed = threading.Event()
+        continue_start = threading.Event()
+        real_thread = threading.Thread
+        errors = []
+        session_id = None
+
+        def controlled_thread(*args, **kwargs):
+            if kwargs.get("target") == self.manager._read_local:
+                reader_constructed.set()
+                continue_start.wait(2)
+            return real_thread(*args, **kwargs)
+
+        def open_session():
+            try:
+                self.manager.open("local")
+            except Exception as exc:
+                errors.append(exc)
+
+        def close_session():
+            try:
+                self.manager.close(session_id)
+            except Exception as exc:
+                errors.append(exc)
+
+        with mock.patch(
+            "curlgen.terminal_manager.subprocess.Popen", return_value=process
+        ), mock.patch(
+            "curlgen.terminal_manager.threading.Thread", side_effect=controlled_thread
+        ), mock.patch.object(
+            self.manager, "_terminate_process", return_value=None
+        ):
+            starter = real_thread(target=open_session)
+            starter.start()
+            self.assertTrue(reader_constructed.wait(1))
+            session_id = next(iter(self.manager._sessions))
+            closer = real_thread(target=close_session)
+            closer.start()
+            continue_start.set()
+            release_output.set()
+            starter.join(2)
+            closer.join(2)
+        self.assertFalse(starter.is_alive())
+        self.assertFalse(closer.is_alive())
+        self.assertEqual(errors, [])
+        events = self.manager.events(session_id, 0)["events"]
+        descriptions = [(event["type"], event["text"]) for event in events]
+        self.assertIn(("stdout", "tail-output"), descriptions)
+        self.assertEqual(descriptions[-1], ("status", "closed"))
+        self.assertEqual(descriptions.count(("status", "closed")), 1)
+
+    def test_close_cannot_join_readers_before_they_start(self):
+        process = FakeProcess()
+        reader_starting = threading.Event()
+        continue_start = threading.Event()
+        real_thread = threading.Thread
+        real_start = threading.Thread.start
+        blocked_once = False
+        errors = []
+        session_id = None
+
+        def controlled_start(reader):
+            nonlocal blocked_once
+            if getattr(reader, "_target", None) == self.manager._read_local and not blocked_once:
+                blocked_once = True
+                reader_starting.set()
+                continue_start.wait(2)
+            return real_start(reader)
+
+        def open_session():
+            try:
+                self.manager.open("local")
+            except Exception as exc:
+                errors.append(exc)
+
+        def close_session():
+            try:
+                self.manager.close(session_id)
+            except Exception as exc:
+                errors.append(exc)
+
+        with mock.patch(
+            "curlgen.terminal_manager.subprocess.Popen", return_value=process
+        ), mock.patch(
+            "curlgen.terminal_manager.threading.Thread.start", controlled_start
+        ), mock.patch.object(
+            self.manager, "_terminate_process", return_value=None
+        ):
+            starter = real_thread(target=open_session)
+            real_start(starter)
+            self.assertTrue(reader_starting.wait(1))
+            session_id = next(iter(self.manager._sessions))
+            closer = real_thread(target=close_session)
+            real_start(closer)
+            continue_start.set()
+            starter.join(2)
+            closer.join(2)
+        self.assertFalse(starter.is_alive())
+        self.assertFalse(closer.is_alive())
+        self.assertEqual(errors, [])
+        result = self.manager.events(session_id, 0)
+        self.assertEqual(result["session"]["status"], "closed")
+
+    def test_finish_local_bounds_reader_join_and_prevents_late_output(self):
+        process = FakeProcess()
+        session = self.make_fake_session(process)
+        release_reader = threading.Event()
+        reader_finished = threading.Event()
+
+        def stuck_reader():
+            release_reader.wait(2)
+            self.manager._emit(session, "stdout", "late-output")
+            reader_finished.set()
+
+        reader = threading.Thread(target=stuck_reader)
+        session["readers"] = [reader]
+        reader.start()
+        with mock.patch.object(
+            self.manager, "READER_JOIN_TIMEOUT", 0.01, create=True
+        ), mock.patch.object(
+            self.manager, "READER_CLOSE_TIMEOUT", 0.01, create=True
+        ):
+            self.manager._finish_local(session)
+        self.assertEqual(session["status"], "closed")
+        release_reader.set()
+        reader.join(2)
+        self.assertTrue(reader_finished.is_set())
+        events = self.manager.events(session["id"], 0)["events"]
+        descriptions = [(event["type"], event["text"]) for event in events]
+        self.assertNotIn(("stdout", "late-output"), descriptions)
+        self.assertEqual(descriptions[-1], ("status", "closed"))
+
     def test_posix_shell_starts_in_its_own_process_group(self):
         process = FakeProcess()
         with mock.patch("curlgen.terminal_manager.os.name", "posix"), mock.patch(
@@ -196,12 +348,44 @@ class LocalTerminalTests(unittest.TestCase):
         process.pid = 4321
         process.poll.return_value = None
         process.wait.return_value = 0
+
+        def signal_group(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError
+
         with mock.patch("curlgen.terminal_manager.os.name", "posix"), mock.patch(
-            "curlgen.terminal_manager.os.killpg", create=True
+            "curlgen.terminal_manager.os.killpg", create=True, side_effect=signal_group
         ) as killpg:
             self.manager._terminate_process(process)
-        killpg.assert_called_once_with(process.pid, signal.SIGTERM)
+        self.assertEqual(
+            killpg.call_args_list,
+            [mock.call(process.pid, signal.SIGTERM), mock.call(process.pid, 0)],
+        )
         process.terminate.assert_not_called()
+
+    def test_posix_sigkill_escalates_when_shell_exits_but_group_survives(self):
+        process = mock.Mock()
+        process.pid = 4321
+        process.poll.return_value = 0
+        process.wait.return_value = 0
+        signals = []
+        sigkill = getattr(signal, "SIGKILL", 9)
+
+        def signal_group(pid, sig):
+            signals.append(sig)
+            if sig == 0 and sigkill not in signals:
+                return
+            if sig == 0:
+                raise ProcessLookupError
+
+        with mock.patch("curlgen.terminal_manager.os.name", "posix"), mock.patch(
+            "curlgen.terminal_manager.signal.SIGKILL", sigkill, create=True
+        ), mock.patch(
+            "curlgen.terminal_manager.os.killpg", create=True, side_effect=signal_group
+        ):
+            self.manager._terminate_process(process)
+        self.assertEqual(signals, [signal.SIGTERM, 0, sigkill])
+        process.wait.assert_called()
 
     def test_close_all_skips_session_removed_by_idle_cleanup(self):
         expired = self.manager.open("local")
