@@ -55,7 +55,8 @@
 - `curlgen/terminal_manager.py`：新增终端会话管理。
 - `curlgen/ssh_executor.py`：仅增加交互通道读写所需的公共封装，保留现有请求执行行为。
 - `curlgen/web_ui.py`：终端路由、令牌校验、退出清理和布局偏好白名单。
-- `curlgen/web/index.html`、`app.js`、`app.css`：组件网格、编辑模式、终端面板和启动逻辑。
+- `curlgen/web/index.html`、`app.js`、`app.css`：组件容器、共享状态、样式和启动逻辑。
+- `curlgen/web/dashboard.js`、`terminal.js`：分别承载布局编辑与终端交互，避免继续扩大 `app.js`。
 - `README.md`：使用说明、持久化与接口文档。
 
 ## 验证
