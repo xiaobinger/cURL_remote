@@ -390,12 +390,17 @@ class _ApiHandler(BaseHTTPRequestHandler):
 
     # ── 业务 ──
     def _terminal_open(self, payload):
+        kind = payload.get("kind") or "local"
         session = self.app.terminals.open(
-            kind=payload.get("kind") or "local",
+            kind=kind,
             label=payload.get("label") or None,
             target_index=payload.get("target_index"),
+            jump=bool(payload.get("jump")) if kind == "ssh" else False,
         )
-        return {key: session[key] for key in ("id", "kind", "label", "status")}
+        return {
+            key: session[key] for key in ("id", "kind", "label", "status", "jump")
+            if key in session
+        }
 
     def _terminal_events(self):
         query = self.path.split("?", 1)[1] if "?" in self.path else ""

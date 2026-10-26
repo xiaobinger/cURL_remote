@@ -244,7 +244,12 @@
       </div>
 
       <div class="dash-card market-card" data-component="market">
-        <div class="dash-card-title">行情 <span class="dash-card-sub">选中日期行情与当月 K 线</span></div>
+        <div class="dash-card-title">行情
+          <button type="button" id="stock-switch-btn" class="stock-switch-btn" title="切换自选股标的">
+            <span id="stock-switch-name">…</span> <i>▾</i>
+          </button>
+          <span class="dash-card-sub">选中日期行情与当月 K 线</span>
+        </div>
         <div class="cal-stock hidden" id="cal-stock"></div>
         <div class="cal-kline-head hidden" id="cal-kline-head">
           <span class="kline-ma-legend">
@@ -272,6 +277,7 @@
           <input id="terminal-input" aria-label="终端命令" autocomplete="off" spellcheck="false" placeholder="输入命令，Enter 执行">
         </div>
         <div class="terminal-toolbar" aria-label="终端操作">
+          <button type="button" id="terminal-jump" title="登录跳板机（进入堡垒机菜单，可直接选服务器）">跳板机</button>
           <select id="terminal-target" class="terminal-target" aria-label="选择 SSH 服务器" title="经跳板机连接所选服务器">
             <option value="">加载 SSH 服务器…</option>
           </select>

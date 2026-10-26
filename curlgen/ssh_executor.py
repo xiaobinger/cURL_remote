@@ -19,6 +19,7 @@ OpenSSH 跳板机有三处根本差异（已实测确认）：
 ``{cmd} 2>&1; echo <SENTINEL>$?``，并把 stderr 合并进 stdout。
 """
 import logging
+import os
 import re
 import socket
 import subprocess
@@ -143,6 +144,19 @@ class GateShellSession:
     def closed(self):
         with self._channel_lock:
             return self._chan is None or self._chan.closed
+
+    @property
+    def boot_text(self):
+        """open() 阶段抓取的堡垒机菜单文本（已剥离 ANSI），供终端直接展示。"""
+        return self._boot_text
+
+    def send_interactive(self, text, delay=None):
+        """逐字符输入（菜单界面一次性灌入会被吞）。供终端跳板机会话使用。"""
+        if delay is None:
+            delay = self.TYPE_DELAY
+        for ch in text:
+            self.send(ch)
+            time.sleep(delay)
 
     def _log(self, text):
         """状态类消息（以 [info] 形式展示）"""
@@ -510,6 +524,7 @@ class LocalExecutor:
             self._proc = subprocess.Popen(
                 command, shell=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except Exception as e:
             logger.error("本地启动进程失败: %s", e)

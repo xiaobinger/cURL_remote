@@ -1417,6 +1417,15 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
 .stock-name.stock-switch:hover { background: var(--bg-input); color: var(--text-1); }
 .stock-name.stock-switch i, .stock-name.stock-switch { font-style: normal; }
 .stock-name.stock-switch i { font-size: 9px; opacity: .7; }
+/* 行情卡片标题常驻切换按钮：非交易日（行情条隐藏）也能切换自选股 */
+.stock-switch-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: none; background: transparent; cursor: pointer;
+  font: 600 13px var(--font-ui); color: var(--text-1);
+  padding: 2px 8px; border-radius: 6px; transition: background .15s;
+}
+.stock-switch-btn:hover { background: var(--bg-input); }
+.stock-switch-btn i { font-style: normal; font-size: 9px; color: var(--text-3); }
 .stock-item b { font-family: var(--font-mono); font-weight: 600; }
 .stock-pct { font: 700 11px var(--font-mono); margin-left: auto; }
 .stock-up { color: var(--red); }

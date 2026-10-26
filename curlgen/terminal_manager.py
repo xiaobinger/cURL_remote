@@ -96,7 +96,7 @@ class TerminalManager:
         self._session_factory = session_factory
         self._ssh_config_loader = ssh_config_loader
 
-    def open(self, kind="local", label=None, target_index=None):
+    def open(self, kind="local", label=None, target_index=None, jump=False):
         self.cleanup_idle()
         if kind not in ("local", "ssh"):
             raise ValueError("unsupported terminal kind")
@@ -106,6 +106,7 @@ class TerminalManager:
             "kind": kind,
             "label": label or "",
             "target_index": target_index,
+            "jump": bool(jump),
             "status": "connecting",
             "events": [],
             "event_bytes": 0,
@@ -159,7 +160,11 @@ class TerminalManager:
                 except (BrokenPipeError, OSError, ValueError) as exc:
                     raise RuntimeError("terminal input is unavailable") from exc
             elif adapter is not None:
-                adapter.send(text)
+                if session.get("jump") and hasattr(adapter, "send_interactive"):
+                    # 堡垒机菜单输入必须逐字符，整行灌入会被吞掉
+                    adapter.send_interactive(text)
+                else:
+                    adapter.send(text)
             else:
                 raise RuntimeError("terminal input is unavailable")
 
@@ -263,6 +268,7 @@ class TerminalManager:
                     stderr=subprocess.PIPE,
                     bufsize=0,
                     start_new_session=os.name != "nt",
+                    creationflags=self._creationflags(),
                 )
             except OSError as exc:
                 self._emit(session, "status", "error")
@@ -307,7 +313,17 @@ class TerminalManager:
             cfg = resolve_ssh_cfg(loader(), session["label"], session["target_index"])
             redactor = _SSHStreamRedactor(cfg.get("jump_pass"))
             label = session["label"]
-            if (
+            jump_only = bool(session.get("jump"))
+            if jump_only:
+                # 跳板机会话：只登录堡垒机菜单，不自动进入任何目标机
+                if not (cfg.get("jump_host") or "").strip() or not (cfg.get("jump_user") or "").strip():
+                    with self._lock:
+                        if session["closed"] or session["closing"]:
+                            return
+                        self._emit(session, "status", "error")
+                        self._emit(session, "stderr", "error: 请先在 SSH 设置中配置堡垒机")
+                    return
+            elif (
                 not label
                 or label != cfg.get("target_label")
                 or not cfg.get("target_host")
@@ -344,14 +360,29 @@ class TerminalManager:
                 should_close = session["closed"] or session["closing"]
             if should_close:
                 return
-            adapter.connect_host(cfg["target_host"])
-            with self._lock:
-                should_close = session["closed"] or session["closing"]
-                if not should_close:
-                    session["status"] = "ready"
-                    self._emit(session, "status", "ready")
-            if should_close:
-                return
+            if jump_only:
+                # 菜单文本在 open() 内被消费缓存，这里回显给用户看服务器列表
+                menu_text = getattr(adapter, "boot_text", "") or ""
+                if menu_text:
+                    safe_menu = redactor.push(menu_text.rstrip("\n") + "\n")
+                    if safe_menu:
+                        self._emit(session, "stdout", safe_menu)
+                with self._lock:
+                    should_close = session["closed"] or session["closing"]
+                    if not should_close:
+                        session["status"] = "ready"
+                        self._emit(session, "status", "ready")
+                if should_close:
+                    return
+            else:
+                adapter.connect_host(cfg["target_host"])
+                with self._lock:
+                    should_close = session["closed"] or session["closing"]
+                    if not should_close:
+                        session["status"] = "ready"
+                        self._emit(session, "status", "ready")
+                if should_close:
+                    return
 
             while True:
                 with self._lock:
@@ -462,7 +493,13 @@ class TerminalManager:
             "kind": session["kind"],
             "label": session["label"],
             "status": session["status"],
+            "jump": bool(session.get("jump")),
         }
+
+    @staticmethod
+    def _creationflags():
+        # GUI 进程没有控制台，再拉起 cmd.exe/taskkill 会额外弹一个黑窗
+        return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
     @staticmethod
     def _local_encoding():
@@ -500,6 +537,7 @@ class TerminalManager:
                     stderr=subprocess.DEVNULL,
                     check=False,
                     timeout=5,
+                    creationflags=TerminalManager._creationflags(),
                 )
                 process.wait(timeout=5)
             except (OSError, subprocess.SubprocessError):

@@ -24,6 +24,7 @@ class TerminalPanel {
     this.kind = "local";
     this.label = "";
     this.targetIndex = null;
+    this.jump = false;
     this.status = "closed";
     this.cursor = 0;
     this.history = [];
@@ -43,6 +44,7 @@ class TerminalPanel {
     this.promptEl = document.querySelector("#terminal-prompt");
     this.card = document.querySelector('[data-component="terminal"]');
     this.targetSelect = document.querySelector("#terminal-target");
+    this.jumpButton = document.querySelector("#terminal-jump");
     this.fullscreenButton = document.querySelector("#terminal-fullscreen");
     this._bind();
     this._renderTargets();
@@ -59,7 +61,12 @@ class TerminalPanel {
         this._historyStep(event.key === "ArrowUp" ? -1 : 1);
       }
     });
+    // 懒启动：首次点击输入框才建立本地会话，避免启动即拉起 shell
+    this.input.addEventListener("focus", () => {
+      if (!this.id && !this._switching) void this.ensureLocal();
+    });
     document.querySelector("#terminal-local").addEventListener("click", () => void this.openLocal());
+    this.jumpButton.addEventListener("click", () => void this.openJump());
     this.targetSelect.addEventListener("change", () => {
       if (!this.targetSelect.value) return;
       const option = this.targetSelect.selectedOptions[0];
@@ -90,8 +97,13 @@ class TerminalPanel {
       this.targetSelect.add(option);
     });
     this.targetSelect.disabled = !targets.length;
-    this.targetSelect.value = this.kind === "ssh" && this.targetIndex !== null
+    this.targetSelect.value = this.kind === "ssh" && !this.jump && this.targetIndex !== null
       ? String(this.targetIndex) : "";
+    const jumpReady = typeof state !== "undefined" && state.ssh
+      && !!((state.ssh.jump_host || "").trim() && (state.ssh.jump_user || "").trim());
+    this.jumpButton.disabled = !jumpReady;
+    this.jumpButton.title = jumpReady
+      ? "登录跳板机（进入堡垒机菜单，可直接选服务器）" : "请先在 SSH 设置中配置堡垒机";
   }
 
   toggleFullscreen(force) {
@@ -151,11 +163,15 @@ class TerminalPanel {
     return this._switch("local", "");
   }
 
-  openSSH(label, targetIndex = null) {
-    return this._switch("ssh", label || "", targetIndex);
+  openJump() {
+    return this._switch("ssh", "跳板机", null, true);
   }
 
-  async _switch(kind, label, targetIndex = null) {
+  openSSH(label, targetIndex = null) {
+    return this._switch("ssh", label || "", targetIndex, false);
+  }
+
+  async _switch(kind, label, targetIndex = null, jump = false) {
     const run = async () => {
       if (!await this.close()) return null;
       this.clear();
@@ -163,14 +179,17 @@ class TerminalPanel {
       this.kind = kind;
       this.label = label;
       this.targetIndex = targetIndex;
+      this.jump = jump;
       this._setStatus("connecting");
       try {
         const payload = { kind, label: label || undefined };
         if (kind === "ssh" && targetIndex !== null) payload.target_index = targetIndex;
+        if (kind === "ssh" && jump) payload.jump = true;
         const session = await terminalApi("/api/terminal/open", payload);
         this.id = session.id;
         this.kind = session.kind || kind;
         this.label = session.label || label;
+        this.jump = !!session.jump || jump;
         this.cursor = 0;
         this._setStatus(session.status || "connecting");
         this._schedule(0, true);
@@ -194,7 +213,10 @@ class TerminalPanel {
   }
 
   reconnect() {
-    return this.kind === "ssh" ? this.openSSH(this.label, this.targetIndex) : this.openLocal();
+    if (this.kind === "ssh") {
+      return this.jump ? this.openJump() : this.openSSH(this.label, this.targetIndex);
+    }
+    return this.openLocal();
   }
 
   _schedule(delay = this._pollDelay(), includeClosed = false) {
@@ -258,6 +280,7 @@ class TerminalPanel {
     if (session && session.id === this.id) {
       this.kind = session.kind || this.kind;
       this.label = session.label || this.label;
+      this.jump = session.jump === undefined ? this.jump : !!session.jump;
       this._setStatus(session.status || this.status);
     }
   }
@@ -275,9 +298,10 @@ class TerminalPanel {
     this.statusEl.textContent = labels[status] || readyLabel;
     this.statusEl.dataset.status = status;
     this.promptEl.textContent = `${this.kind === "ssh" ? (this.label || "SSH") : "本地"}>`;
-    this.targetSelect.value = this.kind === "ssh" && this.targetIndex !== null
+    this.targetSelect.value = this.kind === "ssh" && !this.jump && this.targetIndex !== null
       ? String(this.targetIndex) : "";
-    this.input.disabled = !this.id || status !== "ready";
+    // 无会话时保持可聚焦（懒启动入口）；已连接但未就绪（连接中/出错）才禁用
+    this.input.disabled = Boolean(this.id) && status !== "ready";
     document.querySelector("#terminal-interrupt").disabled = !this.id || status !== "ready";
   }
 

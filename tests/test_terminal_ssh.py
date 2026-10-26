@@ -184,6 +184,22 @@ class BlockingConnectFakeGate(FakeGate):
         super().connect_host(target)
 
 
+class FakeJumpGate(FakeGate):
+    """带堡垒机菜单文本与逐字符输入的假 GateShell，用于跳板机终端会话。"""
+    instances = []
+
+    def __init__(self, cfg, on_log=None, stop_event=None):
+        super().__init__(cfg, on_log, stop_event)
+        self.boot_text = "1) 10.0.0.8  生产A\n2) 10.0.0.9  生产B\n"
+        self.typed = []
+
+    def send_interactive(self, text, delay=None):
+        with self._lock:
+            if self.closed:
+                raise RuntimeError("closed")
+            self.typed.append(text)
+
+
 class BlockingSendFakeGate(FakeGate):
     send_entered = threading.Event()
     release_send = threading.Event()
@@ -263,7 +279,7 @@ class FailingReaderFakeGate(FakeGate):
 class SSHTerminalTests(unittest.TestCase):
     def setUp(self):
         self.manager = None
-        for fake in (FakeGate, BlockingConnectFakeGate, BlockingSendFakeGate):
+        for fake in (FakeGate, FakeJumpGate, BlockingConnectFakeGate, BlockingSendFakeGate):
             fake.instances = []
         BlockingConnectFakeGate.connect_entered = threading.Event()
         BlockingConnectFakeGate.release_connect = threading.Event()
@@ -339,6 +355,38 @@ class SSHTerminalTests(unittest.TestCase):
         manager.write(sid, "pwd\r")
 
         self.assertEqual(FakeGate.instances[0].sent, ["hostname\n", "pwd\n", "pwd\r"])
+
+    def test_jump_session_stops_at_menu_without_connecting_target(self):
+        manager = self.make_manager(factory=FakeJumpGate)
+        session = manager.open("ssh", "跳板机", jump=True)
+        sid = session["id"]
+
+        self.assertTrue(session["jump"])
+        wait_text(manager, sid, "10.0.0.8")
+        self.assertEqual(manager.events(sid, 0)["session"]["status"], "ready")
+
+        gate = FakeJumpGate.instances[0]
+        self.assertEqual(gate.targets, [], "跳板机会话不得自动进入目标机")
+        events = manager.events(sid, 0)
+        self.assertIn(("status", "ready"), [(e["type"], e["text"]) for e in events["events"]])
+        menu_events = "".join(e["text"] for e in events["events"] if e["type"] == "stdout")
+        self.assertIn("生产B", menu_events, "菜单文本应回显给用户")
+
+        manager.write(sid, "/10.0.0.9")
+        self.assertEqual(gate.typed, ["/10.0.0.9\n"], "菜单输入必须走逐字符通道")
+        self.assertEqual(gate.sent, [], "跳板机会话不得使用整行 send")
+
+        info = manager.events(sid, 0)["session"]
+        self.assertTrue(info["jump"])
+
+    def test_jump_session_requires_bastion_config(self):
+        cfg = {"jump_host": "", "jump_user": "", "targets": []}
+        manager = self.make_manager(cfg=cfg)
+        session = manager.open("ssh", "跳板机", jump=True)
+        wait_text(manager, session["id"], "error: 请先在 SSH 设置中配置堡垒机")
+        events = manager.events(session["id"], 0)["events"]
+        self.assertIn(("status", "error"), [(e["type"], e["text"]) for e in events])
+        self.assertEqual(FakeGate.instances + FakeJumpGate.instances, [])
 
     def test_rejects_unknown_or_missing_label_without_constructing_backend(self):
         for label in ("不存在", None):

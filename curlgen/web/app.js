@@ -1492,10 +1492,8 @@ function syncDashboard() {
   $("command-bar").classList.toggle("hidden", show);
   $("workspace").classList.toggle("hidden", show);
   if (show) renderDashboard();
-  if (window.terminalPanel) {
-    window.terminalPanel.refresh();
-    if (show && isDashboardComponentVisible("terminal")) window.terminalPanel.ensureLocal();
-  }
+  // 终端懒启动：不在进 Dashboard 时自动拉起本地 shell，用户点击输入框/发送命令时才建会话
+  if (window.terminalPanel) window.terminalPanel.refresh();
 }
 
 function renderDashboard() {
@@ -1515,11 +1513,9 @@ function renderDashboard() {
   if (isDashboardComponentVisible("almanac")) renderAlmanac();
   if (isDashboardComponentVisible("todo")) loadTodos();
   if (isDashboardComponentVisible("market")) {
+    renderStockSwitchButton();
     loadAstock();
     loadKline();
-  }
-  if (isDashboardComponentVisible("terminal") && window.terminalPanel) {
-    window.terminalPanel.ensureLocal();
   }
 }
 
@@ -1724,8 +1720,15 @@ function switchStock(code) {
   state.stockCode = code;
   try { localStorage.setItem("cg-stock", code); } catch (e) { /* 忽略 */ }
   api("/api/ui_prefs", { stock: code }); // 文件持久化默认标的
+  renderStockSwitchButton();
   loadAstock();
   loadKline();
+}
+
+/* 行情卡片标题的常驻标的切换入口（不依赖行情条是否显示，非交易日也可切换） */
+function renderStockSwitchButton() {
+  const name = $("stock-switch-name");
+  if (name) name.textContent = curStock().name;
 }
 
 /* 月 K 线图（跟随日历选中日所在月份 + 当前标的；当月不缓存，无数据隐藏；点击蜡烛联动选中日） */
@@ -2706,6 +2709,8 @@ async function pollEvents() {
 /* ─────────── 事件绑定 ─────────── */
 function bindEvents() {
   $("btn-copy").addEventListener("click", doCopy);
+  // 行情卡片标题常驻标的切换入口（与行情条上的切换行为一致）
+  bindStockSwitch($("stock-switch-btn"));
   // 预览区「复制」复制当前展示的代码（随语言切换），命令栏「复制」始终复制 cURL
   $("btn-copy2").addEventListener("click", async () => {
     const text = $("curl-preview").textContent.trim();
@@ -3046,6 +3051,7 @@ async function init() {
     dashboardLayout.mount(state.dashboard);
     state.ssh_ready = !!j.ssh_ready;
     if (j.logo) $("brand-logo").src = j.logo;
+    renderStockSwitchButton();
     renderEnvSelect();
     updateConnBadge();
     renderSaved();

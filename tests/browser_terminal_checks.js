@@ -155,6 +155,44 @@
         assert(response.status === 403, "缺少 token 的 open 应返回 403");
       });
 
+      await check("显示 Dashboard 不自动拉起本地 shell（懒启动）", async () => {
+        await panel.close();
+        syncDashboard();
+        renderDashboard();
+        await sleep(300);
+        assert(!panel.id, "Dashboard 可见不得自动创建终端会话");
+        input.focus();
+        // 自动化环境 document 可能没有窗口焦点，focus() 不派发事件，这里显式补发
+        input.dispatchEvent(new Event("focus"));
+        await waitFor(() => !!panel.id, "首次聚焦输入框应建立本地会话");
+        await waitFor(() => panel.status === "ready", "懒启动会话应就绪");
+      });
+
+      await check("跳板机按钮可用性跟随堡垒机配置", async () => {
+        const jumpButton = document.querySelector("#terminal-jump");
+        assert(jumpButton, "工具栏应包含跳板机按钮");
+        const savedSSH = state.ssh;
+        state.ssh = { jump_host: "gate.example", jump_user: "ops", targets: [] };
+        panel.refresh();
+        assert(!jumpButton.disabled, "配置堡垒机后跳板机按钮应可用");
+        state.ssh = { targets: [] };
+        panel.refresh();
+        assert(jumpButton.disabled, "未配置堡垒机时跳板机按钮应禁用");
+        state.ssh = savedSSH;
+        panel.refresh();
+      });
+
+      await check("跳板机会话发送 jump 请求且不直连目标机", async () => {
+        await panel.close();
+        await panel.openJump();
+        const entry = requests.filter((e) => e.target.endsWith("/api/terminal/open") && e.body).at(-1);
+        assert(entry && JSON.parse(entry.body).jump === true, "openJump 应发送 jump: true 的会话请求");
+        assert(panel.kind === "ssh" && panel.label === "跳板机", "跳板机会话前端状态应为 ssh/跳板机");
+        assert(panel.targetSelect.value === "", "跳板机会话不选中任何目标机");
+        assert(panel.jump === true, "面板应记住 jump 会话标记用于重连");
+        await panel.close();
+      });
+
       await check("Dashboard 可见时 ensureLocal 幂等", async () => {
         await panel.ensureLocal();
         const id = panel.id;
