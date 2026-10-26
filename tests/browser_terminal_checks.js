@@ -193,6 +193,70 @@
         await panel.close();
       });
 
+      await check("SSH 会话可直接在输出区键入（raw 逐键）", async () => {
+        const outputArea = document.querySelector("#terminal-output");
+        assert(outputArea.tabIndex === 0, "输出区应可聚焦（tabindex=0）");
+        // 伪造一个就绪的 SSH 会话，拦截相关请求校验 raw 键值
+        const saved = { id: panel.id, kind: panel.kind, status: panel.status, label: panel.label, jump: panel.jump };
+        const rawBodies = [];
+        const realFetch = window.fetch;
+        const okResponse = () => new Response(JSON.stringify({ ok: true }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+        window.fetch = async (url, options) => {
+          const target = String(url);
+          if (target.endsWith("/api/terminal/input")) {
+            rawBodies.push(JSON.parse(options.body));
+            return okResponse();
+          }
+          if (target.includes("/api/terminal/events") && target.includes("inline-test")) {
+            return new Response(JSON.stringify({
+              session: { id: "inline-test", kind: "ssh", label: "跳板机", status: "ready", jump: true },
+              events: [], next: 1,
+            }), { status: 200, headers: { "Content-Type": "application/json" } });
+          }
+          if (target.endsWith("/api/terminal/interrupt")) return okResponse();
+          return realFetch(url, options);
+        };
+        try {
+          panel.id = "inline-test";
+          panel.kind = "ssh";
+          panel.status = "ready";
+          const key = (k, extra = {}) => outputArea.dispatchEvent(new KeyboardEvent("keydown", {
+            key: k, bubbles: true, cancelable: true, ...extra,
+          }));
+          key("a");
+          key("Enter");
+          key("Backspace");
+          key("ArrowUp");
+          key("Tab");
+          key("c", { ctrlKey: true });
+          await sleep(300);
+          assert(JSON.stringify(rawBodies) === JSON.stringify([
+            { id: "inline-test", text: "a", raw: true },
+            { id: "inline-test", text: "\r", raw: true },
+            { id: "inline-test", text: "\x7f", raw: true },
+            { id: "inline-test", text: "\x1b[A", raw: true },
+            { id: "inline-test", text: "\t", raw: true },
+          ]), `输出区按键应逐键 raw 发送，实际 ${JSON.stringify(rawBodies)}`);
+          // Ctrl+C 走中断接口，不进 raw 队列
+          assert(!rawBodies.some((body) => body.text === "c"), "Ctrl+C 应走中断而非 raw 输入");
+          // 本地会话不启用直敲
+          panel.kind = "local";
+          rawBodies.length = 0;
+          key("a");
+          await sleep(150);
+          assert(rawBodies.length === 0, "本地会话输出区按键不得发送 raw 输入");
+        } finally {
+          window.fetch = realFetch;
+          panel.id = saved.id;
+          panel.kind = saved.kind;
+          panel.status = saved.status;
+          panel.label = saved.label;
+          panel.jump = saved.jump;
+        }
+      });
+
       await check("Dashboard 可见时 ensureLocal 幂等", async () => {
         await panel.ensureLocal();
         const id = panel.id;

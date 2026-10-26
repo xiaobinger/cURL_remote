@@ -135,7 +135,7 @@ class TerminalManager:
                 reader.start()
         return self._info(session)
 
-    def write(self, session_id, text):
+    def write(self, session_id, text, raw=False):
         with self._lock:
             session = self._sessions[session_id]
             session["last_used"] = time.monotonic()
@@ -145,7 +145,7 @@ class TerminalManager:
                     raise RuntimeError("terminal session is closed")
                 process = session["process"]
                 adapter = session["adapter"]
-            if not text.endswith(("\n", "\r")):
+            if not raw and not text.endswith(("\n", "\r")):
                 text += "\n"
             if process is not None:
                 data = text.encode(session["encoding"], errors="replace")
@@ -160,8 +160,10 @@ class TerminalManager:
                 except (BrokenPipeError, OSError, ValueError) as exc:
                     raise RuntimeError("terminal input is unavailable") from exc
             elif adapter is not None:
-                if session.get("jump") and hasattr(adapter, "send_interactive"):
-                    # 堡垒机菜单输入必须逐字符，整行灌入会被吞掉
+                # raw 为逐键输入（输出区直敲）：单字节/转义序列直接发送；
+                # 行输入（底部输入框）在跳板机菜单需逐字符节奏，整行灌入会被吞
+                if session.get("jump") and not raw and len(text) > 1 \
+                        and hasattr(adapter, "send_interactive"):
                     adapter.send_interactive(text)
                 else:
                     adapter.send(text)

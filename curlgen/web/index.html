@@ -271,7 +271,9 @@
         <div class="dash-card-title">终端 <span id="terminal-status" class="terminal-status">已断开</span>
           <button type="button" id="terminal-fullscreen" class="terminal-fullscreen-toggle" aria-pressed="false" title="全屏终端（Esc 退出）">全屏</button>
         </div>
-        <div id="terminal-output" class="terminal-output" role="log" aria-live="polite" aria-relevant="additions text"></div>
+        <div id="terminal-output" class="terminal-output" role="log" aria-live="polite"
+             aria-relevant="additions text" tabindex="0"
+             title="SSH 会话可点击此处后直接键入命令"></div>
         <div class="terminal-input-row">
           <span id="terminal-prompt">本地&gt;</span>
           <input id="terminal-input" aria-label="终端命令" autocomplete="off" spellcheck="false" placeholder="输入命令，Enter 执行">

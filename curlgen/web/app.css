@@ -1525,6 +1525,14 @@ select:focus, .data-table input:focus, .data-table select:focus { outline: none;
   font: 12px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere;
   scrollbar-width: thin; scrollbar-color: var(--border) transparent;
 }
+/* SSH 会话点击输出区后可直接键入，用细边框提示焦点 */
+.terminal-output:focus-visible,
+.terminal-output:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.terminal-output::selection { background: rgba(91, 157, 255, .35); }
 .terminal-input-row {
   display: flex; align-items: center; gap: 8px; margin-top: 8px;
   padding: 7px 10px; border: 1px solid var(--border-soft); border-radius: var(--r-sm);

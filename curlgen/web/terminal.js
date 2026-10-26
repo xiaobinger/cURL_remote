@@ -82,6 +82,51 @@ class TerminalPanel {
     document.querySelector("#terminal-interrupt").addEventListener("click", () => void this.interrupt());
     document.querySelector("#terminal-reconnect").addEventListener("click", () => void this.reconnect());
     document.querySelector("#terminal-clear").addEventListener("click", () => this.clear());
+    // SSH 会话可直接在输出区键入（PTY 远端回显），本地 cmd 无回显仍走底部输入框
+    this.output.addEventListener("keydown", (event) => this._onOutputKey(event));
+  }
+
+  _onOutputKey(event) {
+    if (this.kind !== "ssh" || this.status !== "ready" || !this.id) return;
+    if (event.ctrlKey && (event.key === "c" || event.key === "C")) {
+      event.preventDefault();
+      void this.interrupt();
+      return;
+    }
+    if (event.ctrlKey || event.altKey || event.metaKey) return;
+    let text = null;
+    if (event.key === "Enter") text = "\r";
+    else if (event.key === "Backspace") text = "\x7f";
+    else if (event.key === "Tab") text = "\t";
+    else if (event.key === "ArrowUp") text = "\x1b[A";
+    else if (event.key === "ArrowDown") text = "\x1b[B";
+    else if (event.key === "ArrowRight") text = "\x1b[C";
+    else if (event.key === "ArrowLeft") text = "\x1b[D";
+    else if (event.key === "Escape") return; // Esc 优先用于退出全屏
+    else if (event.key.length === 1) text = event.key;
+    if (text === null) return;
+    event.preventDefault();
+    void this._sendRaw(text);
+  }
+
+  async _sendRaw(text) {
+    const id = this.id;
+    const generation = this.generation;
+    const operation = this._inputQueue.then(async () => {
+      if (id !== this.id || generation !== this.generation) return;
+      try {
+        await terminalApi("/api/terminal/input", { id, text, raw: true });
+        if (id === this.id && generation === this.generation) this._wake();
+      } catch (error) {
+        if (id === this.id && generation === this.generation) {
+          this._append(`错误: ${error.message}\n`);
+          this._setStatus("error");
+          toast(`按键发送失败: ${error.message}`, "err");
+        }
+      }
+    });
+    this._inputQueue = operation;
+    await operation;
   }
 
   _renderTargets() {
@@ -302,6 +347,9 @@ class TerminalPanel {
       ? String(this.targetIndex) : "";
     // 无会话时保持可聚焦（懒启动入口）；已连接但未就绪（连接中/出错）才禁用
     this.input.disabled = Boolean(this.id) && status !== "ready";
+    this.input.placeholder = this.kind === "ssh"
+      ? "输入命令，Enter 执行；也可点击上方输出区直接键入"
+      : "输入命令，Enter 执行";
     document.querySelector("#terminal-interrupt").disabled = !this.id || status !== "ready";
   }
 

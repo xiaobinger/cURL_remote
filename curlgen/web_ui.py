@@ -317,7 +317,10 @@ class _ApiHandler(BaseHTTPRequestHandler):
             if path == "/api/terminal/open":
                 self._send_json(self._terminal_open(data))
             elif path == "/api/terminal/input":
-                self.app.terminals.write(data.get("id") or "", data.get("text") or "")
+                self.app.terminals.write(
+                    data.get("id") or "", data.get("text") or "",
+                    raw=bool(data.get("raw")),
+                )
                 self._send_json({"ok": True})
             elif path == "/api/terminal/interrupt":
                 self.app.terminals.interrupt(data.get("id") or "")

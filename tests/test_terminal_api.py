@@ -33,8 +33,11 @@ class FakeTerminals:
         response.update(self.open_extra)
         return response
 
-    def write(self, session_id, text):
-        self.calls.append(("write", session_id, text))
+    def write(self, session_id, text, raw=False):
+        call = ("write", session_id, text)
+        if raw:
+            call = call + (True,)
+        self.calls.append(call)
 
     def events(self, session_id, since=0):
         self.calls.append(("events", session_id, since))
@@ -409,6 +412,16 @@ class TerminalAPIHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(response, {"ok": True})
         self.assertEqual(self.terminals.calls, [("write", "t1", "echo ok")])
+
+    def test_input_route_passes_raw_flag(self):
+        status, _, _, _ = self.assert_json_response(
+            "POST",
+            "/api/terminal/input",
+            {"id": "t1", "text": "\r", "raw": True, "jump_pass": "ignored"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(self.terminals.calls, [("write", "t1", "\r", True)])
 
     def test_events_route_passes_id_and_nonnegative_since(self):
         status, _, response, _ = self.assert_json_response(

@@ -379,6 +379,32 @@ class SSHTerminalTests(unittest.TestCase):
         info = manager.events(sid, 0)["session"]
         self.assertTrue(info["jump"])
 
+    def test_raw_keystrokes_bypass_pacing_and_newline_append(self):
+        manager = self.make_manager(factory=FakeJumpGate)
+        session = manager.open("ssh", "跳板机", jump=True)
+        sid = session["id"]
+        wait_text(manager, sid, "10.0.0.8")
+        gate = FakeJumpGate.instances[0]
+
+        manager.write(sid, "a", raw=True)
+        manager.write(sid, "\r", raw=True)
+        manager.write(sid, "\x1b[A", raw=True)
+        self.assertEqual(gate.sent, ["a", "\r", "\x1b[A"],
+                         "raw 逐键输入应直发，不补换行也不走逐字符节奏")
+
+        manager.write(sid, "hostname")
+        self.assertEqual(gate.typed, ["hostname\n"], "行输入仍走逐字符节奏并补换行")
+
+    def test_raw_keystrokes_on_target_session_stay_verbatim(self):
+        manager = self.make_manager()
+        session = manager.open("ssh", "生产B")
+        sid = session["id"]
+        wait_text(manager, sid, "root@test")
+
+        manager.write(sid, "l", raw=True)
+        manager.write(sid, "s", raw=True)
+        self.assertEqual(FakeGate.instances[0].sent, ["l", "s"])
+
     def test_jump_session_requires_bastion_config(self):
         cfg = {"jump_host": "", "jump_user": "", "targets": []}
         manager = self.make_manager(cfg=cfg)
