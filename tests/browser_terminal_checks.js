@@ -454,6 +454,34 @@
         output.scrollTop = output.scrollHeight;
       });
 
+      await check("滚离底部出现跟随按钮，点击回底恢复跟随", async () => {
+        const follow = document.querySelector("#terminal-follow");
+        assert(follow, "应存在跟随输出按钮");
+        output.scrollTop = output.scrollHeight;
+        output.dispatchEvent(new Event("scroll"));
+        assert(follow.classList.contains("hidden"), "位于底部时跟随按钮应隐藏");
+        output.scrollTop = 0;
+        output.dispatchEvent(new Event("scroll"));
+        assert(!follow.classList.contains("hidden"), "滚离底部后跟随按钮应出现");
+        follow.click();
+        assert(output.scrollTop + output.clientHeight >= output.scrollHeight - 4, "点击跟随应回到底部");
+        assert(follow.classList.contains("hidden"), "回到底部后跟随按钮应隐藏");
+        await send("echo TERMINAL_FOLLOW_RESUME", "TERMINAL_FOLLOW_RESUME");
+        assert(output.scrollTop + output.clientHeight >= output.scrollHeight - 4, "恢复跟随后新输出应自动滚动到底");
+      });
+
+      await check("活跃流/输出区聚焦使用高频轮询", async () => {
+        // 输出区聚焦即高频（键入回显跟手）
+        output.focus();
+        assert(panel._pollDelay() <= 100, `输出区聚焦应高频轮询，实际 ${panel._pollDelay()}ms`);
+        output.blur();
+        // 收到事件后 1.5s 内保持高频（tail -f 等持续输出）
+        panel._lastEventAt = Date.now();
+        assert(panel._pollDelay() <= 100, `活跃流应高频轮询，实际 ${panel._pollDelay()}ms`);
+        panel._lastEventAt = Date.now() - 5000;
+        assert(panel._pollDelay() > 100, `空闲应回落常规频率，实际 ${panel._pollDelay()}ms`);
+      });
+
       await check("setTimeout 串行轮询且 seq 不重复", async () => {
         maxActivePolls = 0;
         await sleep(1000);
@@ -606,6 +634,16 @@
         assert(card.classList.contains("terminal-maximized"), "按钮应最大化终端卡片");
         assert(document.body.classList.contains("terminal-fullscreen-open"), "全屏应锁定背景滚动");
         assert(toggle.getAttribute("aria-pressed") === "true", "全屏按钮应暴露 pressed 状态");
+        // 全屏占据主工作区：左侧对齐侧栏右缘，侧栏保持可见
+        const cardRect = card.getBoundingClientRect();
+        const sidebarRect = document.querySelector("#sidebar").getBoundingClientRect();
+        assert(Math.abs(cardRect.left - sidebarRect.right) <= 2,
+          `全屏终端应从侧栏右缘开始，实际 left=${cardRect.left} sidebar.right=${sidebarRect.right}`);
+        assert(Math.abs(cardRect.top) <= 2 && window.innerHeight - cardRect.bottom <= 2,
+          "全屏终端应纵向铺满工作区");
+        const outputStyle = getComputedStyle(document.querySelector("#terminal-output"));
+        assert(parseFloat(outputStyle.fontSize) >= 13, "全屏输出字号应放大到 13px");
+        assert(parseFloat(getComputedStyle(card).borderTopWidth) === 0, "全屏应贴边无圆角浮卡样式");
         assert(panel.id === id && await sessionStatus(id) === "ready", "进入全屏不得重开或断开会话");
         card.classList.add("component-hidden");
         assert(getComputedStyle(card).display === "none", "全屏终端仍必须响应组件隐藏");
@@ -712,12 +750,15 @@
 
       await check("工作台低频轮询但不断会话", async () => {
         const id = panel.id;
+        // 排除活跃流加速窗口，单测可见性分级本身
+        panel._lastEventAt = 0;
         const dashboardDelay = panel._pollDelay();
         const tab = newTab();
         await sleep(900);
         assert(panel.id === id && await sessionStatus(id) === "ready", "打开工作台不得断开会话");
         assert(panel._pollDelay() > dashboardDelay, "工作台应降低轮询频率");
         await closeTab(tab.id);
+        panel._lastEventAt = 0;
         assert(panel._pollDelay() === dashboardDelay, "回 Dashboard 应恢复轮询频率");
       });
 

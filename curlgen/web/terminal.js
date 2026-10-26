@@ -42,10 +42,14 @@ class TerminalPanel {
     this.input = document.querySelector("#terminal-input");
     this.statusEl = document.querySelector("#terminal-status");
     this.promptEl = document.querySelector("#terminal-prompt");
+    this.followEl = document.querySelector("#terminal-follow");
     this.card = document.querySelector('[data-component="terminal"]');
     this.targetSelect = document.querySelector("#terminal-target");
     this.jumpButton = document.querySelector("#terminal-jump");
     this.fullscreenButton = document.querySelector("#terminal-fullscreen");
+    this._outputFocused = false;
+    this._lastEventAt = 0;
+    this._following = true;
     this._bind();
     this._renderTargets();
     this._setStatus("closed");
@@ -84,6 +88,12 @@ class TerminalPanel {
     document.querySelector("#terminal-clear").addEventListener("click", () => this.clear());
     // SSH 会话可直接在输出区键入（PTY 远端回显），本地 cmd 无回显仍走底部输入框
     this.output.addEventListener("keydown", (event) => this._onOutputKey(event));
+    // 输出区聚焦时提高轮询频率，键入回显更跟手
+    this.output.addEventListener("focus", () => { this._outputFocused = true; });
+    this.output.addEventListener("blur", () => { this._outputFocused = false; });
+    // 用户滚离底部后停止自动跟随，点「跟随输出」回到底部恢复
+    this.output.addEventListener("scroll", () => this._updateFollowing());
+    this.followEl.addEventListener("click", () => this._jumpToBottom());
   }
 
   _onOutputKey(event) {
@@ -184,7 +194,10 @@ class TerminalPanel {
 
   _pollDelay() {
     if (document.hidden) return 2500;
-    return this._isVisible() ? 250 : 1500;
+    if (this._outputFocused) return 90;
+    if (!this._isVisible()) return 1500;
+    // 可见且活跃流（tail -f 等持续输出）用高频轮询，回显/滚动更流畅
+    return Date.now() - this._lastEventAt < 1500 ? 90 : 250;
   }
 
   refresh() {
@@ -313,6 +326,7 @@ class TerminalPanel {
       this.cursor = 0;
     }
     const events = Array.isArray(data.events) ? data.events : [];
+    if (events.length) this._lastEventAt = Date.now();
     events.forEach((event) => {
       const seq = Number(event.seq);
       if (!Number.isSafeInteger(seq) || seq <= this.cursor) return;
@@ -333,7 +347,30 @@ class TerminalPanel {
   _append(value) {
     const nearBottom = this.output.scrollHeight - this.output.scrollTop - this.output.clientHeight < 24;
     this.output.appendChild(document.createTextNode(String(value)));
-    if (nearBottom) this.output.scrollTop = this.output.scrollHeight;
+    if (nearBottom) {
+      this.output.scrollTop = this.output.scrollHeight;
+      this._following = true;
+    } else {
+      this._following = false;
+    }
+    this._updateFollowButton();
+  }
+
+  _updateFollowing() {
+    const atBottom = this.output.scrollHeight - this.output.scrollTop - this.output.clientHeight < 24;
+    this._following = atBottom;
+    this._updateFollowButton();
+  }
+
+  _updateFollowButton() {
+    this.followEl.classList.toggle("hidden", this._following);
+  }
+
+  _jumpToBottom() {
+    this.output.scrollTop = this.output.scrollHeight;
+    this._following = true;
+    this._updateFollowButton();
+    this.output.focus();
   }
 
   _setStatus(status) {
@@ -433,6 +470,8 @@ class TerminalPanel {
   clear() {
     this.output.textContent = "";
     this.output.scrollTop = 0;
+    this._following = true;
+    this._updateFollowButton();
   }
 }
 
