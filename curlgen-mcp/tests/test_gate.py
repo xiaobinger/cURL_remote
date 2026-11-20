@@ -1,6 +1,16 @@
+import logging
+import socket
+import threading
+import tomllib
 import unittest
+from pathlib import Path
+from unittest import mock
 
+import paramiko
+from curlgen_mcp import gate
 from curlgen_mcp.gate import (
+    GateError,
+    GateShellSession,
     _extract_body,
     parse_gate_hosts,
     strip_ansi,
@@ -62,6 +72,99 @@ class GateParsingTests(unittest.TestCase):
 
     def test_extract_body_returns_empty_without_markers(self):
         self.assertEqual(_extract_body(b"just output", "S", "E"), "just output")
+
+
+class LegacyHostKeyTests(unittest.TestCase):
+    """GateShell appliances often only offer the SHA-1 ``ssh-rsa`` host key."""
+
+    @classmethod
+    def setUpClass(cls):
+        probe_sock, peer = socket.socketpair()
+        transport = paramiko.Transport(probe_sock)
+        cls.ssh_rsa_supported = "ssh-rsa" in transport.preferred_keys
+        transport.close()
+        probe_sock.close()
+        peer.close()
+
+    def test_ssh_rsa_only_bastion_completes_the_handshake(self):
+        if not self.ssh_rsa_supported:
+            self.skipTest("installed paramiko dropped ssh-rsa; covered by the pin test")
+
+        paramiko_log = logging.getLogger("paramiko.transport")
+        previous_level = paramiko_log.level
+        paramiko_log.setLevel(logging.CRITICAL)
+        self.addCleanup(paramiko_log.setLevel, previous_level)
+
+        class _AcceptAll(paramiko.ServerInterface):
+            def check_auth_password(self, username, password):
+                return paramiko.AUTH_SUCCESSFUL
+
+            def get_allowed_auths(self, username):
+                return "password"
+
+        host_key = paramiko.RSAKey.generate(2048)
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        self.addCleanup(listener.close)
+        address = listener.getsockname()
+
+        def serve():
+            conn, _ = listener.accept()
+            server = paramiko.Transport(conn)
+            server.add_server_key(host_key)
+            server._preferred_keys = ("ssh-rsa",)
+            try:
+                server.start_server(server=_AcceptAll())
+            except (OSError, EOFError, paramiko.SSHException):
+                pass  # the client hangs up right after the handshake
+            finally:
+                server.close()
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+
+        session = GateShellSession(address[0], address[1], "user", "secret")
+        sock = socket.create_connection(address, timeout=5)
+        transport = session._start_transport(paramiko, sock)
+        try:
+            self.assertEqual(
+                transport.get_remote_server_key().get_name(), "ssh-rsa"
+            )
+        finally:
+            transport.close()
+            sock.close()
+            session.close()
+
+    def test_unacceptable_host_key_error_tells_how_to_fix(self):
+        class _FakeTransport:
+            def __init__(self, sock):
+                pass
+
+            def start_client(self, timeout=None):
+                raise paramiko.ssh_exception.IncompatiblePeer(
+                    "Incompatible ssh peer (no acceptable host key)"
+                )
+
+            def close(self):
+                pass
+
+        session = GateShellSession("bastion", 22, "user", "secret")
+        with mock.patch.object(socket, "create_connection", return_value=socket.socket()), \
+                mock.patch.object(paramiko, "Transport", _FakeTransport):
+            with self.assertRaises(GateError) as raised:
+                session.open()
+        message = str(raised.exception)
+        self.assertIn("ssh-rsa", message)
+        self.assertIn("paramiko<5", message)
+
+    def test_dependency_pins_paramiko_below_five(self):
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        paramiko_spec = next(
+            item for item in data["project"]["dependencies"] if item.startswith("paramiko")
+        )
+        self.assertIn("<5", paramiko_spec)
 
 
 if __name__ == "__main__":

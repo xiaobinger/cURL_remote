@@ -35,6 +35,14 @@ _GATE_ROW_RE = re.compile(
 _GATE_STATUS_RE = re.compile(r"(\d+)/(\d+),\s*(\S+)")
 _SHELL_PROMPT_RE = re.compile(r"\[[^\]\n]*\][#$][ \t]*$")
 
+# GateShell appliances commonly ship only an ssh-rsa (SHA-1) host key. Paramiko
+# removed that algorithm in 5.0, so curlgen-mcp pins paramiko<5.
+_HOST_KEY_HINT = (
+    "堡垒机只提供 ssh-rsa(SHA-1) 主机密钥，而 paramiko 5 起已移除该算法。"
+    "请安装 paramiko<5（例如 pip install -U --force-reinstall curlgen-mcp），"
+    "或让堡垒机改用 rsa-sha2-256/512、ed25519 主机密钥。"
+)
+
 
 class GateError(Exception):
     """GateShell connection or command failure."""
@@ -140,6 +148,11 @@ class GateShellSession:
         if self.stop_event is not None and self.stop_event.is_set():
             raise GateError("已手动停止")
 
+    def _start_transport(self, paramiko, sock):
+        transport = paramiko.Transport(sock)
+        transport.start_client(timeout=self.CONNECT_TIMEOUT)
+        return transport
+
     def open(self):
         import paramiko
 
@@ -156,12 +169,16 @@ class GateShellSession:
 
         try:
             sock.settimeout(self.CONNECT_TIMEOUT)
-            self._transport = paramiko.Transport(sock)
-            self._transport.start_client(timeout=self.CONNECT_TIMEOUT)
+            self._transport = self._start_transport(paramiko, sock)
             self._transport.auth_password(self.user, self.password)
         except paramiko.ssh_exception.AuthenticationException as exc:
             self.close()
             raise GateError(f"堡垒机认证失败（用户名或密码错误）: {exc}") from exc
+        except paramiko.ssh_exception.IncompatiblePeer as exc:
+            self.close()
+            if "host key" in str(exc).lower():
+                raise GateError(f"{exc}。{_HOST_KEY_HINT}") from exc
+            raise GateError(f"堡垒机协商失败: {exc}") from exc
         except socket.timeout:
             self.close()
             raise GateError(f"连接堡垒机超时（{self.CONNECT_TIMEOUT}s）") from None

@@ -243,7 +243,7 @@ python curl_generator.py
 ```bash
 cd curlgen-mcp
 uv build
-pip install dist/curlgen_mcp-1.0.1-py3-none-any.whl
+pip install dist/curlgen_mcp-1.0.2-py3-none-any.whl
 ```
 
 MCP 客户端配置示例、完整参数、GateShell 与文件传输限制见 [curlgen-mcp/README.md](curlgen-mcp/README.md)。

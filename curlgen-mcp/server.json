@@ -3,7 +3,7 @@
   "name": "io.github.xiaobinger/curlgen-mcp",
   "title": "cURL Generator MCP",
   "description": "HTTP requests, signed code generation, GateShell/SSH execution and file transfer.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "websiteUrl": "https://github.com/xiaobinger/cURL_remote",
   "repository": {
     "url": "https://github.com/xiaobinger/cURL_remote",
@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "identifier": "curlgen-mcp",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
