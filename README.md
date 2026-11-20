@@ -28,6 +28,7 @@
 - [界面速览](#-界面速览)
 - [架构总览](#-架构总览)
 - [快速开始](#-快速开始)
+- [MCP Server（curlgen-mcp）](#-mcp-servercurlgen-mcp)
 - [目录结构](#-目录结构)
 - [核心机制详解](#-核心机制详解)
   - [环境变量引用 `{{ref}}`](#1-环境变量引用-ref)
@@ -221,6 +222,31 @@ python curl_generator.py
 ### 直接使用发行版
 
 下载 `dist/CurlGenerator.exe`，双击即用 —— 无需安装 Python 环境。
+
+---
+
+## 🔌 MCP Server（curlgen-mcp）
+
+`curlgen-mcp/` 将桌面端能力封装为可发布的 **MCP stdio Server**（PyPI 包名 `curlgen-mcp`，Registry 名 `io.github.xiaobinger/curlgen-mcp`），供 Claude Desktop、Cursor、Qoder 等 MCP 客户端调用。配置直接复用 `~/.cURL`（`env_configs.json` / `ssh_config.json`），也可用 `CURLGEN_*` 环境变量覆盖。
+
+**16 个工具**覆盖四类能力：
+
+| 能力 | 工具 |
+| --- | --- |
+| 请求执行 | `http_request`、`remote_http_request`（GateShell / 标准 SSH） |
+| 代码生成 | `generate_code`（curl / Python / JS / TS / Node / Java / C# / Go / PHP / Rust，静态或运行时签名） |
+| 直连跳板机 | `ssh_list_targets`、`ssh_exec`、`ssh_upload`、`ssh_download` |
+| GateShell 堡垒机 | `bastion_login`、`bastion_list_hosts`、`bastion_connect`、`bastion_exec`、`bastion_status`、`bastion_logout`、`bastion_upload`、`bastion_download` |
+
+签名支持 `auto / body / header / query / none` 位置，可自定义字段名与 Header 名。运行时签名代码从 `CURLGEN_SIGN_KEY` 读取密钥，生成的代码中不会写入真实密钥；环境密钥和 SSH 密码不会出现在列表类工具输出中。
+
+```bash
+cd curlgen-mcp
+uv build
+pip install dist/curlgen_mcp-1.0.0-py3-none-any.whl
+```
+
+MCP 客户端配置示例、完整参数、GateShell 与文件传输限制见 [curlgen-mcp/README.md](curlgen-mcp/README.md)。
 
 ---
 
@@ -434,6 +460,7 @@ pyinstaller CurlGenerator.spec
 | 前端 | 原生 HTML5 + CSS3 + Vanilla JS（零框架） |
 | 网络 / 执行 | http.server、subprocess、socket |
 | SSH | paramiko（堡垒机交互式会话） |
+| MCP | FastMCP（stdio）、paramiko、urllib |
 | 签名 | hashlib（MD5 / SHA256，Java 风格） |
 | 打包 | PyInstaller |
 
