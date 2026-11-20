@@ -15,8 +15,6 @@ except ModuleNotFoundError as exc:
         raise
     from mcp.server.fastmcp import FastMCP as _MCPServer
 
-MCP_SDK_MAJOR = 2 if _MCPServer.__module__.startswith("mcp.server.mcpserver") else 1
-
 
 def create_server(name, *, instructions=None, version=None):
     """Build an SDK server instance on either the 1.x or 2.x API line."""
