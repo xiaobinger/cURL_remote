@@ -14,15 +14,13 @@ import threading
 import warnings
 from typing import Any
 
-# Pydantic Settings emits this on Python 3.14 while MCP imports FastMCP; it does
-# not affect server behaviour and would otherwise pollute the stdio stderr log.
+# Pydantic Settings emits this on Python 3.14 while the MCP SDK is imported; it
+# does not affect server behaviour and would otherwise pollute the stdio stderr log.
 warnings.filterwarnings(
     "ignore", message="Field 'lifespan' has an incomplete definition.*"
 )
 
-from mcp.server.fastmcp import FastMCP
-
-from . import codegen, config, paths
+from . import __version__, codegen, config, paths
 from .gate import GateError, GateTimeout, open_session
 from .http import (
     HTTPFailure,
@@ -30,12 +28,13 @@ from .http import (
     parse_remote_output,
     perform_http,
 )
+from .mcp_compat import create_server
 from .request import build_request
 from .ssh import StandardSSH
 
 logger = logging.getLogger("curlgen_mcp.server")
 
-mcp = FastMCP(
+mcp = create_server(
     "curlgen-mcp",
     instructions=(
         "HTTP request execution, signed request code generation, standard SSH "
@@ -43,6 +42,7 @@ mcp = FastMCP(
         "command execution and base64 file transfer. Secrets stay in ~/.cURL "
         "or environment variables and are never returned by list tools."
     ),
+    version=__version__,
 )
 
 _BASTION_LOCK = threading.RLock()

@@ -20,7 +20,7 @@ pip install curlgen-mcp
 uvx curlgen-mcp
 ```
 
-Python 3.10+ is required. Dependencies: `mcp`, `paramiko`.
+Python 3.10+ is required. Dependencies: `mcp>=1.29,<3` (both the 1.x `FastMCP` and 2.x `MCPServer` API lines are supported) and `paramiko`.
 
 ## MCP client configuration
 

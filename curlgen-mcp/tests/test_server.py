@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import json
 import os
 import sys
@@ -224,7 +226,10 @@ class EnvironmentAndCodegenTests(_ServerCase):
 
 class ToolRegistrationTests(unittest.TestCase):
     def test_exactly_the_documented_tools_are_registered(self):
-        names = {tool.name for tool in server.mcp._tool_manager.list_tools()}
+        tools = server.mcp.list_tools()
+        if inspect.isawaitable(tools):
+            tools = asyncio.run(tools)
+        names = {tool.name for tool in tools}
         self.assertEqual(names, EXPECTED_TOOLS)
 
 

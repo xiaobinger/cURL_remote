@@ -227,7 +227,7 @@ python curl_generator.py
 
 ## 🔌 MCP Server（curlgen-mcp）
 
-`curlgen-mcp/` 将桌面端能力封装为可发布的 **MCP stdio Server**（PyPI 包名 `curlgen-mcp`，Registry 名 `io.github.xiaobinger/curlgen-mcp`），供 Claude Desktop、Cursor、Qoder 等 MCP 客户端调用。配置直接复用 `~/.cURL`（`env_configs.json` / `ssh_config.json`），也可用 `CURLGEN_*` 环境变量覆盖。
+`curlgen-mcp/` 将桌面端能力封装为可发布的 **MCP stdio Server**（兼容 MCP Python SDK 1.x / 2.x）（PyPI 包名 `curlgen-mcp`，Registry 名 `io.github.xiaobinger/curlgen-mcp`），供 Claude Desktop、Cursor、Qoder 等 MCP 客户端调用。配置直接复用 `~/.cURL`（`env_configs.json` / `ssh_config.json`），也可用 `CURLGEN_*` 环境变量覆盖。
 
 **16 个工具**覆盖四类能力：
 
@@ -243,7 +243,7 @@ python curl_generator.py
 ```bash
 cd curlgen-mcp
 uv build
-pip install dist/curlgen_mcp-1.0.0-py3-none-any.whl
+pip install dist/curlgen_mcp-1.0.1-py3-none-any.whl
 ```
 
 MCP 客户端配置示例、完整参数、GateShell 与文件传输限制见 [curlgen-mcp/README.md](curlgen-mcp/README.md)。
