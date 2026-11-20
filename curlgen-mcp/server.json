@@ -1,0 +1,88 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.xiaobinger/curlgen-mcp",
+  "title": "cURL Generator MCP",
+  "description": "HTTP requests, signed code generation, GateShell/SSH execution and file transfer.",
+  "version": "1.0.0",
+  "websiteUrl": "https://github.com/xiaobinger/cURL_remote",
+  "repository": {
+    "url": "https://github.com/xiaobinger/cURL_remote",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "curlgen-mcp",
+      "version": "1.0.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "CURLGEN_CONFIG_DIR",
+          "description": "Config directory. Defaults to ~/.cURL (the desktop app's directory).",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "CURLGEN_MCP_FILE_ROOTS",
+          "description": "Allowed local roots for upload/download, separated by the OS path separator.",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "CURLGEN_JUMP_PASSWORD",
+          "description": "Overrides the jump-host password from ssh_config.json.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "CURLGEN_ENV",
+          "description": "Default signing environment alias when a tool omits environment.",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "CURLGEN_SIGN_KEY",
+          "description": "Overrides the signing key from env_configs.json.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "CURLGEN_SIGN_ALGO",
+          "description": "Overrides the signing algorithm (MD5 or SHA256).",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "CURLGEN_TARGET_PASSWORD",
+          "description": "Overrides the target-machine password.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "CURLGEN_TARGET_KEY",
+          "description": "Overrides the target-machine private key path.",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "CURLGEN_MCP_MAX_RESPONSE",
+          "description": "Maximum HTTP response bytes (default 2097152, max 20971520).",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "CURLGEN_MCP_MAX_TRANSFER",
+          "description": "Maximum upload/download bytes (default 8388608).",
+          "format": "string",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}
