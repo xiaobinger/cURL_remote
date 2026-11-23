@@ -9,16 +9,20 @@
 *Generate · Sign · Execute — 一处搞定从 cURL 拼装到远程落地的全链路*
 
 [![Version](https://img.shields.io/badge/version-2.0.0-4c8dff.svg?style=flat-square)](#)
-[![Python](https://img.shields.io/badge/Python-3.8+-3776AB.svg?style=flat-square&logo=python&logoColor=white)](#)
-[![PyQt5](https://img.shields.io/badge/PyQt5-5.x-41CD52.svg?style=flat-square&logo=qt&logoColor=white)](#)
+[![Python](https://img.shields.io/badge/Python-3.8+-3776AB.svg?style=flat-square\&logo=python\&logoColor=white)](#)
+[![PyQt5](https://img.shields.io/badge/PyQt5-5.x-41CD52.svg?style=flat-square\&logo=qt\&logoColor=white)](#)
 [![QtWebEngine](https://img.shields.io/badge/QtWebEngine-Chromium-22d3ee.svg?style=flat-square)](#)
 [![paramiko](https://img.shields.io/badge/SSH-paramiko-a78bfa.svg?style=flat-square)](#)
-[![Platform](https://img.shields.io/badge/platform-Windows-0078D6.svg?style=flat-square&logo=windows&logoColor=white)](#)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D6.svg?style=flat-square\&logo=windows\&logoColor=white)](#)
 [![License](https://img.shields.io/badge/license-MIT-f7c948.svg?style=flat-square)](#)
+
+\<p><a href="https://mcprush.com/to/curl-generator-mcp?ref=badge"><img width="380" height="200" src="https://mcprush.com/badge/curl-generator-mcp/card.svg" alt="cURL Generator MCP server" /></a>\</p>
+
+<br />
 
 </div>
 
----
+***
 
 ## 📖 目录
 
@@ -43,7 +47,7 @@
 - [常见问题 FAQ](#-常见问题-faq)
 - [开发路线图](#-开发路线图)
 
----
+***
 
 ## 🎯 一句话定位
 
@@ -51,22 +55,22 @@
 
 > 从「手写 cURL」到「所见即所得的请求工作台」，它消灭了拼 URL、算签名、登堡垒机、贴命令这四步的重复劳动。
 
----
+***
 
 ## 💡 为什么需要它
 
 后端联调时的日常痛点，它逐一接管：
 
-| 痛点 | cURL Generator 的解法 |
-| --- | --- |
-| 手拼 query / header / JSON body，格式一错就 400 | 结构化表单 + **一键美化/压缩**，自动拼装并转义 |
-| 签名规则写死在文档里，每次都要手算 MD5/SHA256 | 环境里配好密钥与算法，**生成时自动算签、自动注入** |
-| 不同环境（测试/预发/生产）域名、密钥来回切换 | **环境配置 + `{{变量}}` 引用**，切环境即切全量参数 |
-| 内网机器不通外网，要在堡垒机上敲命令 | **堡垒机一键透传**，本地生成、远端执行、输出回显 |
-| 常用请求每次重填 | **快捷请求分组** + **历史记录**，点一下即复活 |
-| 工具界面丑、看久了累 | **深空座舱 / 晨雾** 双主题，深色护眼、发光主按钮 |
+| 痛点                                      | cURL Generator 的解法               |
+| --------------------------------------- | -------------------------------- |
+| 手拼 query / header / JSON body，格式一错就 400 | 结构化表单 + **一键美化/压缩**，自动拼装并转义      |
+| 签名规则写死在文档里，每次都要手算 MD5/SHA256            | 环境里配好密钥与算法，**生成时自动算签、自动注入**      |
+| 不同环境（测试/预发/生产）域名、密钥来回切换                 | **环境配置 + `{{变量}}` 引用**，切环境即切全量参数 |
+| 内网机器不通外网，要在堡垒机上敲命令                      | **堡垒机一键透传**，本地生成、远端执行、输出回显       |
+| 常用请求每次重填                                | **快捷请求分组** + **历史记录**，点一下即复活     |
+| 工具界面丑、看久了累                              | **深空座舱 / 晨雾** 双主题，深色护眼、发光主按钮     |
 
----
+***
 
 ## ✨ 核心特性
 
@@ -75,6 +79,7 @@
 <td width="50%" valign="top">
 
 ### 🧭 请求工作台
+
 - 方法选择（GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS），**方法联动页签**：POST 类自动切 Body、GET 类自动切 Query Params（手动切换、打开快捷请求、切换标签均生效）
 - URL、Query Params、Headers 键值表编辑
 - Body 支持 **JSON / Form Data / Raw Text / None**
@@ -86,6 +91,7 @@
 <td width="50%" valign="top">
 
 ### 🔐 签名与环境
+
 - **MD5 / SHA256** 双算法，Java 风格大小写不敏感排序
 - 签名参数名可自定义（默认 `sign`）
 - 多环境配置（别名 / 密钥 / 算法 / 目标机）
@@ -98,6 +104,7 @@
 <td width="50%" valign="top">
 
 ### 🖧 远程执行
+
 - **本地直发**：「▶ 执行（本地）」由 Python 直接发起 HTTP 请求（不依赖系统 curl），自动跟随重定向，实时回传响应体，真实状态码 / 响应头 / 耗时尽收
 - **SSH 远程**：代码预览（cURL 语言）右下角「🖧 SSH 请求」（仅当前环境开启 SSH 且预览为 cURL 时显示），二次确认后经堡垒机执行；远程 curl 自动追加 `-w` 尾注，Console 同样能解析出 HTTP 状态 / 耗时 / 体积
 - **GateShell 堡垒机**密码认证菜单接入
@@ -109,6 +116,7 @@
 <td width="50%" valign="top">
 
 ### 🎨 体验与工程
+
 - **7 套主题**：深空蓝 / 晨雾白 / 曜石黑 / 暗夜紫 / 墨绿森林 / 经典QQ / 阳光橙，菜单选择并持久记忆（与默认行情标的同存 `~/.cURL/ui_prefs.json`，重启后恢复上次所选）
 - 快捷请求分组、历史记录、一键复制
 - **多标签页**（Postman 式）：每个请求一个标签，脏标记 ●，互不惊扰；**Ctrl+S 覆盖保存**；关闭未保存标签时提醒「保存并关闭 / 直接关闭」
@@ -117,7 +125,7 @@
 - **Console 面板**（Postman 风格）：底部独立页签，每个请求标签各有一份记录；一次执行一条可折叠条目，展开可见 概览（状态行 / 耗时 / 体积）/ Request Headers·Body（实际发送报文）/ Response Headers·Body / cURL 等效命令 / 脚本日志，状态徽章按 2xx·3xx·4xx/5xx 着色；关闭标签或退出软件即清空
 - 响应区：HTTP 状态行 / 耗时 / 体积元信息，JSON Pretty / Raw 切换，一键复制
 - **JSON 工具**：响应框 / Console 详情里选中 JSON 字符串，右键「{ } JSON 工具」唤起编辑弹框——输入实时校验（含类型识别与错误定位），支持格式化 / 压缩 / 转义（bejson 风格不带外层引号）/ 去转义 / 一键复制
-- **首页仪表盘**：关闭全部请求标签后自动呈现——统计卡片（快捷请求 / 分组 / 环境 / SSH 目标机 / 本次执行·成功率）、当月日历（农历、节日、节气，周一为首，今天高亮，法定节假日标「休」、调休补班标「班」，在线拉取失败自动回落内置数据；交易日选中后日历下方显示行情条：开盘价 / 收盘价（当天为实时现价）与涨跌幅，涨红跌绿，非交易日自动隐藏；并渲染选中月份的日 K 线图（内嵌 ECharts，蜡烛 + MA5/MA10/MA20 均线 + 成交量副图，红涨绿跌，图上方标注均线颜色图例，选中日高亮描边，hover 查看 OHLC 与均线值，点击蜡烛联动选中日，当月自动补上「今日形成中蜡烛」）；行情标的在行情条上下拉切换，左下角 📈 图标弹窗管理自选股（代码联网校验自动补全名称，「设为默认」指定默认展示标的并记忆，内置上证指数不可删））、**黄历详情**（宜 / 忌 / 干支 / 生肖 / 值神 / 冲煞 / 喜神财神方位 / 彭祖百忌，内嵌 lunar.js 完全离线）、**待办卡片**（右键日历任意一天即可创建，跟随选中日显示，可勾选完成 / 删除，当天无待办自动隐藏，持久化到本地）；「＋」或「新建请求」随时回到工作台
+- **首页仪表盘**：启动即展示，关闭全部请求标签后也会回到这里——统计卡片（快捷请求 / 分组 / 环境 / SSH 目标机 / 本次执行·成功率）、当月日历（农历、节日、节气，周一为首，今天高亮，法定节假日标「休」、调休补班标「班」，在线拉取失败自动回落内置数据；交易日选中后日历下方显示行情条：开盘价 / 收盘价（当天为实时现价）与涨跌幅，涨红跌绿，非交易日自动隐藏；并渲染选中月份的日 K 线图（内嵌 ECharts，蜡烛 + MA5/MA10/MA20 均线 + 成交量副图，红涨绿跌，图上方标注均线颜色图例，选中日高亮描边，hover 查看 OHLC 与均线值，点击蜡烛联动选中日，当月自动补上「今日形成中蜡烛」）；行情标的在行情条上下拉切换，左下角 📈 图标弹窗管理自选股（代码联网校验自动补全名称，「设为默认」指定默认展示标的并记忆，内置上证指数不可删））、**黄历详情**（宜 / 忌 / 干支 / 生肖 / 值神 / 冲煞 / 喜神财神方位 / 彭祖百忌，内嵌 lunar.js 完全离线）、**待办卡片**（右键日历任意一天即可创建，跟随选中日显示，可勾选完成 / 删除，当天无待办自动隐藏，持久化到本地）；「＋」或「新建请求」随时回到工作台
 - 侧栏页签式（快捷请求 / 历史记录切换）+ 搜索 + 请求项右键（新标签打开 / 重命名 / 删除）+ 分组计数徽章；设置类入口收纳为底部图标行
 - **一键导入** Postman Collection v2.1 / 环境变量 / OpenAPI 3（Apifox 可导出）：分组、鉴权、前后置脚本全映射，同名自动合并；环境变量导入为「自定义参数」，`{{变量名}}` 引用即刻生效
 - KV 行启用勾选：禁用的 Header / Param 不进生成的命令
@@ -129,7 +137,7 @@
 </tr>
 </table>
 
----
+***
 
 ## 🖥 界面速览
 
@@ -156,7 +164,7 @@
 
 > 左侧导航四大区块：**请求构建 / 环境管理 / SSH 设置 / 切换主题**，底部常驻 **快捷请求** 与 **历史记录**，以及实时 **连接状态徽标**。
 
----
+***
 
 ## 🏛 架构总览
 
@@ -193,19 +201,19 @@ flowchart TB
 - **核心与界面解耦**：命令构建、签名、执行三大逻辑都在纯 Python 模块里，与界面完全分离，可独立测试。
 - **UI 走 Web 化路线**：把界面交给浏览器引擎，获得远超传统 Qt 控件的动效与排版自由度；Python 端只做数据与执行，通过本地 HTTP + 事件流通信。
 
----
+***
 
 ## 🚀 快速开始
 
 ### 环境要求
 
-| 依赖 | 版本 | 说明 |
-| --- | --- | --- |
-| Python | 3.8+ | 建议 3.10 ~ 3.11 |
-| PyQt5 | 5.15+ | GUI 基础（必装） |
-| PyQtWebEngine | 5.15+ | 星轨控制台渲染引擎（必装） |
-| paramiko | 2.x / 3.x | SSH 堡垒机远程执行（选装） |
-| pyinstaller | 5+ | 仅打包时需要 |
+| 依赖            | 版本        | 说明              |
+| ------------- | --------- | --------------- |
+| Python        | 3.8+      | 建议 3.10 \~ 3.11 |
+| PyQt5         | 5.15+     | GUI 基础（必装）      |
+| PyQtWebEngine | 5.15+     | 星轨控制台渲染引擎（必装）   |
+| paramiko      | 2.x / 3.x | SSH 堡垒机远程执行（选装） |
+| pyinstaller   | 5+        | 仅打包时需要          |
 
 ### 安装依赖
 
@@ -223,7 +231,7 @@ python curl_generator.py
 
 下载 `dist/CurlGenerator.exe`，双击即用 —— 无需安装 Python 环境。
 
----
+***
 
 ## 🔌 MCP Server（curlgen-mcp）
 
@@ -231,11 +239,11 @@ python curl_generator.py
 
 **16 个工具**覆盖四类能力：
 
-| 能力 | 工具 |
-| --- | --- |
-| 请求执行 | `http_request`、`remote_http_request`（GateShell / 标准 SSH） |
-| 代码生成 | `generate_code`（curl / Python / JS / TS / Node / Java / C# / Go / PHP / Rust，静态或运行时签名） |
-| 直连跳板机 | `ssh_list_targets`、`ssh_exec`、`ssh_upload`、`ssh_download` |
+| 能力            | 工具                                                                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 请求执行          | `http_request`、`remote_http_request`（GateShell / 标准 SSH）                                                                                    |
+| 代码生成          | `generate_code`（curl / Python / JS / TS / Node / Java / C# / Go / PHP / Rust，静态或运行时签名）                                                      |
+| 直连跳板机         | `ssh_list_targets`、`ssh_exec`、`ssh_upload`、`ssh_download`                                                                                   |
 | GateShell 堡垒机 | `bastion_login`、`bastion_list_hosts`、`bastion_connect`、`bastion_exec`、`bastion_status`、`bastion_logout`、`bastion_upload`、`bastion_download` |
 
 签名支持 `auto / body / header / query / none` 位置，可自定义字段名与 Header 名。运行时签名代码从 `CURLGEN_SIGN_KEY` 读取密钥，生成的代码中不会写入真实密钥；环境密钥和 SSH 密码不会出现在列表类工具输出中。
@@ -248,7 +256,7 @@ pip install dist/curlgen_mcp-1.0.2-py3-none-any.whl
 
 MCP 客户端配置示例、完整参数、GateShell 与文件传输限制见 [curlgen-mcp/README.md](curlgen-mcp/README.md)。
 
----
+***
 
 ## 📁 目录结构
 
@@ -280,13 +288,13 @@ buildCurl/
             └── lunar.js       # 农历黄历库（lunar-javascript, MIT，离线内嵌）
 ```
 
----
+***
 
 ## 🔬 核心机制详解
 
 ### 1. 环境变量引用 `{{ref}}`
 
-在任何文本字段（URL、Header 值、Body、代理）中写 `{{变量名}}`，生成时会替换为 **当前环境** 下配置的 `自定义变量` 值。变量定义在 **环境配置管理** 的「自定义变量」列，格式为 `k1=v1; k2=v2`。
+在任何文本字段（URL、Header 值、Body、代理）中写 `{{变量名}}`，生成时会替换为 **当前环境** 下配置的 `自定义变量` 值。在 **环境配置管理** 的「自定义变量」列点击任意环境，会弹出表格编辑器：逐行修改已有变量、`+ 添加变量` 新增、`×` 删除，`保存` 写回当前环境（`取消` / `Esc` / 点遮罩放弃修改）。空变量名会被忽略，同名变量以最后一行为准。
 
 **替换规则**（与 Java 后端保持完全一致）：
 
@@ -316,10 +324,10 @@ for k, v in var_map.items():
 sorted(key1=value1&key2=value2&...) + "key={secret}"
 ```
 
-| 算法 | 实现 | 输出 |
-| --- | --- | --- |
-| `MD5` | `md5(sign_str).hexdigest().upper()` | 32 位大写十六进制 |
-| `SHA256` | Java `MessageDigest("SHA-256")` 风格 | 64 位大写十六进制 |
+| 算法       | 实现                                  | 输出         |
+| -------- | ----------------------------------- | ---------- |
+| `MD5`    | `md5(sign_str).hexdigest().upper()` | 32 位大写十六进制 |
+| `SHA256` | Java `MessageDigest("SHA-256")` 风格  | 64 位大写十六进制 |
 
 **签名值落点：**
 
@@ -332,11 +340,11 @@ sorted(key1=value1&key2=value2&...) + "key={secret}"
 
 工具对接的是 **GateShell 菜单式堡垒机**（协议标识 `SSH-2.0-SSHD_*`）。它与普通 OpenSSH 跳板机有 **三处根本差异**，本项目已针对性适配：
 
-| 差异 | 现象 | 本项目对策 |
-| --- | --- | --- |
-| ❌ 不支持 SSH `exec` | 通道被立即关闭，`exit_status=-1` | 放弃 exec，改用交互式 shell |
-| ❌ 不做原始 TCP 透传 | `direct-tcpip` 回连指纹与堡垒机自身一致（接管而非转发） | 放弃嵌套隧道，走菜单 |
-| ✅ 唯一入口是交互式菜单 | `invoke_shell()` 得到 TUI 授权机列表 | **菜单 → 搜索 → 回车进入目标机** |
+| 差异               | 现象                                  | 本项目对策                 |
+| ---------------- | ----------------------------------- | --------------------- |
+| ❌ 不支持 SSH `exec` | 通道被立即关闭，`exit_status=-1`            | 放弃 exec，改用交互式 shell   |
+| ❌ 不做原始 TCP 透传    | `direct-tcpip` 回连指纹与堡垒机自身一致（接管而非转发） | 放弃嵌套隧道，走菜单            |
+| ✅ 唯一入口是交互式菜单     | `invoke_shell()` 得到 TUI 授权机列表       | **菜单 → 搜索 → 回车进入目标机** |
 
 **执行流程：**
 
@@ -371,64 +379,64 @@ sorted(key1=value1&key2=value2&...) + "key={secret}"
 
 **前端兼容注意**：内置 QtWebEngine 的 Chromium 版本较老，前端 **避免使用 `inset` 简写、`color-mix()`** 等新特性（代码中已用兼容写法替代）。
 
----
+***
 
 ## 🌐 本地 HTTP API 一览
 
-| 方法 | 路由 | 说明 |
-| --- | --- | --- |
-| `GET` | `/api/state` | 全量状态（logo / 环境 / 快捷请求 / SSH 配置 / 就绪标记） |
-| `GET` | `/api/envs` | 环境配置列表 |
-| `GET` | `/api/ssh` | SSH 配置（不含密码） |
-| `GET` | `/api/ssh_targets` | 目标机列表 |
-| `GET` | `/api/history` | 生成历史 |
-| `GET` | `/api/events?since=N` | 事件流增量（执行输出 / 通知 / 测试结果） |
-| `GET` | `/api/holidays?year=YYYY` | 全年节假日 / 调休映射（代理 timor.tech，离线回落内置数据） |
-| `GET` | `/api/astock?date=YYYY-MM-DD&code=sh000001` | 某日行情（历史代理东方财富/腾讯日 K，当天代理腾讯实时；非交易日返回 `trading=false`；code 支持自选股） |
-| `GET` | `/api/astock_kline?month=YYYY-MM&code=sh000001` | 整月日 K + `prev_closes` 月前收盘价（供 MA20 起点）；东财→腾讯双源自愈，当月自动用实时行情补上「今日形成中蜡烛」 |
-| `GET` | `/api/stocks` | 自选股列表（内置上证指数） |
-| `POST` | `/api/ui_prefs` | 保存 UI 偏好（`theme` / `stock`，白名单合并写入 `~/.cURL/ui_prefs.json`） |
-| `GET` | `/api/stock_lookup?code=600519` | 联网校验股票代码并补全名称（6 开头=沪 / 0、3 开头=深 / 支持 sh、sz 前缀） |
-| `POST` | `/api/stocks` | 自选股增 / 删（`action=add\|del`，持久化到 `~/.cURL/stocks.json`） |
-| `GET` | `/api/todos` | 待办列表 |
-| `POST` | `/api/todos` | 待办增 / 勾选 / 删（`action=add\|toggle\|del`） |
-| `POST` | `/api/generate` | 生成 cURL 命令并返回签名预览（`lang=python` 等时返回对应语言代码） |
-| `POST` | `/api/execute` | 执行请求（`mode=local` / `ssh`） |
-| `POST` | `/api/stop` | 停止当前执行 |
-| `POST` | `/api/copy` | 写入系统剪贴板 |
-| `POST` | `/api/save_request` | 保存/更新快捷请求 |
-| `POST` | `/api/delete_request` | 删除快捷请求 |
-| `POST` | `/api/clear_history` | 清空历史 |
-| `POST` | `/api/save_envs` | 保存环境配置 |
-| `POST` | `/api/save_ssh` | 保存 SSH 配置 |
-| `POST` | `/api/test_ssh` | 触发连接测试（异步，结果走事件流） |
+| 方法     | 路由                                              | 说明                                                                    |
+| ------ | ----------------------------------------------- | --------------------------------------------------------------------- |
+| `GET`  | `/api/state`                                    | 全量状态（logo / 环境 / 快捷请求 / SSH 配置 / 就绪标记）                                |
+| `GET`  | `/api/envs`                                     | 环境配置列表                                                                |
+| `GET`  | `/api/ssh`                                      | SSH 配置（不含密码）                                                          |
+| `GET`  | `/api/ssh_targets`                              | 目标机列表                                                                 |
+| `GET`  | `/api/history`                                  | 生成历史                                                                  |
+| `GET`  | `/api/events?since=N`                           | 事件流增量（执行输出 / 通知 / 测试结果）                                               |
+| `GET`  | `/api/holidays?year=YYYY`                       | 全年节假日 / 调休映射（代理 timor.tech，离线回落内置数据）                                  |
+| `GET`  | `/api/astock?date=YYYY-MM-DD&code=sh000001`     | 某日行情（历史代理东方财富/腾讯日 K，当天代理腾讯实时；非交易日返回 `trading=false`；code 支持自选股）       |
+| `GET`  | `/api/astock_kline?month=YYYY-MM&code=sh000001` | 整月日 K + `prev_closes` 月前收盘价（供 MA20 起点）；东财→腾讯双源自愈，当月自动用实时行情补上「今日形成中蜡烛」 |
+| `GET`  | `/api/stocks`                                   | 自选股列表（内置上证指数）                                                         |
+| `POST` | `/api/ui_prefs`                                 | 保存 UI 偏好（`theme` / `stock`，白名单合并写入 `~/.cURL/ui_prefs.json`）           |
+| `GET`  | `/api/stock_lookup?code=600519`                 | 联网校验股票代码并补全名称（6 开头=沪 / 0、3 开头=深 / 支持 sh、sz 前缀）                        |
+| `POST` | `/api/stocks`                                   | 自选股增 / 删（`action=add\|del`，持久化到 `~/.cURL/stocks.json`）                |
+| `GET`  | `/api/todos`                                    | 待办列表                                                                  |
+| `POST` | `/api/todos`                                    | 待办增 / 勾选 / 删（`action=add\|toggle\|del`）                               |
+| `POST` | `/api/generate`                                 | 生成 cURL 命令并返回签名预览（`lang=python` 等时返回对应语言代码）                           |
+| `POST` | `/api/execute`                                  | 执行请求（`mode=local` / `ssh`）                                            |
+| `POST` | `/api/stop`                                     | 停止当前执行                                                                |
+| `POST` | `/api/copy`                                     | 写入系统剪贴板                                                               |
+| `POST` | `/api/save_request`                             | 保存/更新快捷请求                                                             |
+| `POST` | `/api/delete_request`                           | 删除快捷请求                                                                |
+| `POST` | `/api/clear_history`                            | 清空历史                                                                  |
+| `POST` | `/api/save_envs`                                | 保存环境配置                                                                |
+| `POST` | `/api/save_ssh`                                 | 保存 SSH 配置                                                             |
+| `POST` | `/api/test_ssh`                                 | 触发连接测试（异步，结果走事件流）                                                     |
 
----
+***
 
 ## 💾 配置持久化
 
 所有用户数据落在 **当前登录用户主目录** 的 `~/.cURL/`（Windows 为 `C:\Users\<你>\.cURL\`），与程序安装位置无关，升级/搬迁不丢配置。
 
-| 文件 | 内容 |
-| --- | --- |
-| `env_configs.json` | 环境配置（别名 / 密钥 / 算法 / 参数名 / 变量 / 目标机） |
-| `ssh_config.json` | 跳板机信息 + 多目标机列表 |
-| `saved_requests.json` | 快捷请求分组与内容 |
-| `sign_configs.json` | 签名相关配置 |
-| `logs/curlgen.log` | 按天滚动日志，保留 30 天 |
+| 文件                    | 内容                                  |
+| --------------------- | ----------------------------------- |
+| `env_configs.json`    | 环境配置（别名 / 密钥 / 算法 / 参数名 / 变量 / 目标机） |
+| `ssh_config.json`     | 跳板机信息 + 多目标机列表                      |
+| `saved_requests.json` | 快捷请求分组与内容                           |
+| `sign_configs.json`   | 签名相关配置                              |
+| `logs/curlgen.log`    | 按天滚动日志，保留 30 天                      |
 
 > 🔒 **安全提醒**：签名密钥与 SSH 密码以明文存于 `~/.cURL/` 本地配置中，**请勿将该目录提交到任何仓库或共享**。
 
----
+***
 
 ## ⌨️ 快捷键
 
-| 快捷键 | 功能 |
-| --- | --- |
-| `Ctrl + Enter` | 生成 cURL |
-| `Ctrl + Shift + Enter` | 执行请求 |
+| 快捷键                    | 功能      |
+| ---------------------- | ------- |
+| `Ctrl + Enter`         | 生成 cURL |
+| `Ctrl + Shift + Enter` | 执行请求    |
 
----
+***
 
 ## 📦 打包发布
 
@@ -446,27 +454,27 @@ pyinstaller CurlGenerator.spec
 
 产物输出至 `dist/CurlGenerator.exe`。
 
----
+***
 
 ## 🧰 技术栈
 
 <div align="center">
 
-| 层级 | 技术 |
-| :---: | :--- |
-| 语言 | Python 3 |
-| GUI 框架 | PyQt5（Fusion 样式） |
-| 新版渲染引擎 | QtWebEngine / Chromium |
-| 前端 | 原生 HTML5 + CSS3 + Vanilla JS（零框架） |
-| 网络 / 执行 | http.server、subprocess、socket |
-| SSH | paramiko（堡垒机交互式会话） |
-| MCP | FastMCP（stdio）、paramiko、urllib |
-| 签名 | hashlib（MD5 / SHA256，Java 风格） |
-| 打包 | PyInstaller |
+|    层级   | 技术                                |
+| :-----: | :-------------------------------- |
+|    语言   | Python 3                          |
+|  GUI 框架 | PyQt5（Fusion 样式）                  |
+|  新版渲染引擎 | QtWebEngine / Chromium            |
+|    前端   | 原生 HTML5 + CSS3 + Vanilla JS（零框架） |
+| 网络 / 执行 | http.server、subprocess、socket     |
+|   SSH   | paramiko（堡垒机交互式会话）                |
+|   MCP   | FastMCP（stdio）、paramiko、urllib    |
+|    签名   | hashlib（MD5 / SHA256，Java 风格）     |
+|    打包   | PyInstaller                       |
 
 </div>
 
----
+***
 
 ## ❓ 常见问题 FAQ
 
@@ -474,39 +482,45 @@ pyinstaller CurlGenerator.spec
 <summary><b>启动提示缺少 PyQtWebEngine？</b></summary>
 
 界面由 QtWebEngine 渲染，请安装：`pip install PyQtWebEngine`。使用打包好的 `dist/CurlGenerator.exe` 则无此问题。
+
 </details>
 
 <details>
 <summary><b>改了 app.js / app.css 为什么不生效？</b></summary>
 
 前端资源在应用启动时经本地 HTTP 服务加载进页面，**必须重启程序** 才会加载新内容。
+
 </details>
 
 <details>
 <summary><b>SSH 执行报"不是 GateShell 类型堡垒机"？</b></summary>
 
 本工具针对 **菜单式堡垒机** 适配。若你的跳板机是标准 OpenSSH 且支持 `exec`，并不需要此处的菜单流程，可在其 shell 内直接使用系统 `ssh`。
+
 </details>
 
 <details>
 <summary><b>提示"授权列表中没有某 IP"？</b></summary>
 
 目标机必须已在堡垒机侧 **授权给你的账号**。可在 SSH 设置里点「测试目标机」，或查看菜单中的授权机器总数。
+
 </details>
 
 <details>
 <summary><b>`{{变量}}` 没有被替换？</b></summary>
 
 请确认：① 已在「环境管理」中为 **当前选中的环境** 配好该变量；② 变量名拼写与 `{{}}` 内完全一致（区分大小写、含空格）；③ 顶部环境下拉确实选中了对应环境。悬停引用时气泡显示 `（未定义）` 即说明未命中。
+
 </details>
 
 <details>
 <summary><b>配置存在哪？换电脑怎么迁移？</b></summary>
 
 全部在 `~/.cURL/`。拷贝该目录到新机器同名路径即可无缝迁移。
+
 </details>
 
----
+***
 
 ## 🗺 开发路线图
 
@@ -516,11 +530,11 @@ pyinstaller CurlGenerator.spec
 - [ ] 签名算法扩展（HMAC 系列）
 - [ ] 多语言界面（EN / 中）
 
----
+***
 
 <div align="center">
 
-**cURL Generator · 星轨控制台** &nbsp;v2.0.0
+**cURL Generator · 星轨控制台**  v2.0.0
 
 用一座座舱，装下接口调试的全部星光。⭐
 
