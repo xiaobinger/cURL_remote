@@ -16,7 +16,7 @@
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6.svg?style=flat-square\&logo=windows\&logoColor=white)](#)
 [![License](https://img.shields.io/badge/license-MIT-f7c948.svg?style=flat-square)](#)
 
-\<p><a href="https://mcprush.com/to/curl-generator-mcp?ref=badge"><img width="380" height="200" src="https://mcprush.com/badge/curl-generator-mcp/card.svg" alt="cURL Generator MCP server" /></a>\</p>
+<a href="https://mcprush.com/to/curl-generator-mcp?ref=badge"><img width="380" height="200" src="https://mcprush.com/badge/curl-generator-mcp/card.svg" alt="cURL Generator MCP server" /></a>
 
 <br />
 
